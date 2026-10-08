@@ -1,0 +1,16 @@
+[Unit]
+Description=Igloo server
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+User=igloo
+Group=igloo
+EnvironmentFile=/etc/igloo/control.env
+ExecStart=/usr/local/bin/igloo-control
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

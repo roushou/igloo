@@ -1,0 +1,22 @@
+# Operating an Igloo host from a workstation; see docs/deploy.md. IGLOO_VPS is the host as ssh
+# knows it, IGLOO_VPS_DIR the repository checkout on it.
+
+[env]
+IGLOO_VPS = "{{ get_env(name='IGLOO_VPS', default='vps') }}"
+IGLOO_VPS_DIR = "{{ get_env(name='IGLOO_VPS_DIR', default='igloo') }}"
+
+[tasks.deploy]
+description = "Pull main on the host, rebuild and restart Igloo"
+run = "ssh -t $IGLOO_VPS \"cd $IGLOO_VPS_DIR && git pull --ff-only && ./deploy/vps.sh update\""
+
+[tasks.tunnel]
+description = "Forward the host's Igloo API and MCP to http://127.0.0.1:7000"
+run = "ssh -N -L 7000:127.0.0.1:7000 $IGLOO_VPS"
+
+[tasks.token]
+description = "Print the host's API token"
+run = "ssh -t $IGLOO_VPS \"$IGLOO_VPS_DIR/deploy/vps.sh token\""
+
+[tasks.logs]
+description = "Follow the server and worker logs"
+run = "ssh -t $IGLOO_VPS sudo journalctl -f -u igloo-control -u igloo-worker"

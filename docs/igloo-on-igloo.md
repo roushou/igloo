@@ -5,7 +5,8 @@ GitHub Actions keeps building every commit independently.
 
 ## Once
 
-1. Run the server and a Linux worker with the OCI runtime and overlays (`docs/dev-linux.md`).
+1. Run the server and a Linux worker with the OCI runtime and overlays: `docs/deploy.md` on a
+   host, or `docs/dev-linux.md` for development.
 2. Create a fine-grained GitHub token for `roushou/igloo` with **Contents: read and write**. If
    `main` has branch protection or a ruleset, let the token's owner bypass it: Igloo pushes `main`
    when it merges.

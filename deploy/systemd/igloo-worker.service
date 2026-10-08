@@ -1,0 +1,16 @@
+[Unit]
+Description=Igloo worker
+After=igloo-control.service
+Wants=igloo-control.service
+
+[Service]
+EnvironmentFile=/etc/igloo/worker.env
+ExecStart=/usr/local/bin/igloo-worker
+Restart=always
+RestartSec=2
+# The worker creates cgroups for its containers.
+Delegate=yes
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
