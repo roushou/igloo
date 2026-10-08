@@ -1,0 +1,3341 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Igloo",
+    "description": "The Igloo control plane API.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "v1"
+  },
+  "paths": {
+    "/v1/blobs/{digest}": {
+      "get": {
+        "tags": [
+          "snapshots"
+        ],
+        "summary": "Downloads a blob. Authenticated by the bearer token or a presigned download URL.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "description": "Presigned URL expiry, Unix seconds",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "signature",
+            "in": "query",
+            "description": "Presigned URL signature",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "snapshots"
+        ],
+        "summary": "Uploads bytes under their blake3 digest. Idempotent; rejected if the bytes do not match.\nAuthenticated by the bearer token or a presigned upload URL.",
+        "operationId": "put",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "description": "`blake3:<64 hex>`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "description": "Presigned URL expiry, Unix seconds",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "signature",
+            "in": "query",
+            "description": "Presigned URL signature",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Gets a change.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/approve": {
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Approves a change's latest revision as the caller, who must be a human.",
+        "operationId": "approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/close": {
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Closes a change without merging.",
+        "operationId": "close",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/comments": {
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Comments on a revision of a change, the latest by default, optionally on a line of a file.",
+        "operationId": "comment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/merge": {
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Merges a change: its latest revision's checks must have passed, it must fast-forward the\ntarget branch, and changes to protected paths need a human approval. Igloo pushes the\ntarget branch.",
+        "operationId": "merge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/request-changes": {
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Asks for another revision, carrying the comments made since the previous request. A change\nmade by a task sends them to its agent as its next turn.",
+        "operationId": "request_changes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/revisions": {
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Records the source branch's current head as the next revision; an unchanged head records\nnothing.",
+        "operationId": "revise",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/changes/{id}/runs": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Lists the runs of a change, one per revision, oldest first.",
+        "operationId": "of_change",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunResource"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Gets a job.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}/logs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Streams a job's output as server-sent events: `stdout` and `stderr` events whose id resumes\nthe stream through `Last-Event-ID`, then one `end` event with the finished job.",
+        "operationId": "logs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "Resume after this event",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos": {
+      "get": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Lists repositories, oldest first.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RepoResource"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Registers a repository.",
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRepoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoResource"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos/{id}": {
+      "get": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Gets a repository.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos/{id}/changes": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Lists a repository's changes, oldest first.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeResource"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Opens a change proposing a branch pushed to the forge; its head is the first revision.",
+        "operationId": "open",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos/{id}/secrets": {
+      "get": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Lists the names of a repository's secrets; values are never returned.",
+        "operationId": "list_secrets",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretList"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos/{id}/secrets/{name}": {
+      "put": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Sets or replaces a secret. The body is its value, as text.",
+        "operationId": "set_secret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "`[A-Z_][A-Z0-9_]*`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Deletes a secret.",
+        "operationId": "delete_secret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos/{id}/snapshots": {
+      "post": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Snapshots a repository at a commit: the checkout under `/workspace`, with a shallow `.git`,\nover an optional base snapshot. A branch is fetched from the forge first.",
+        "operationId": "snapshot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoSnapshotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSnapshotResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/repos/{id}/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Lists a repository's tasks, oldest first.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskResource"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Creates a task: the agent starts from the head of the repository's default branch.",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runs/{id}": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Gets a run.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandboxes": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Lists sandboxes, ordered by id, optionally filtered by labels (`label=key=value`, repeatable).",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "label",
+            "in": "query",
+            "description": "`key=value`; every label must match",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200; 50 when omitted",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxList"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Creates a sandbox from a registered snapshot.",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Makes retries safe",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandboxes/{id}": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Gets a sandbox.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandboxes/{id}/exec": {
+      "post": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Runs a process in a sandbox as a job.",
+        "operationId": "exec",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandboxes/{id}/snapshot": {
+      "post": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Seals a running sandbox into a snapshot. The seal completes in the background; poll it with\n`GET /v1/seals/{id}`.",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SealResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandboxes/{id}/stop": {
+      "post": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Stops a sandbox. Idempotent.",
+        "operationId": "stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/seals/{id}": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Gets a seal.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SealResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/seals/{id}/layer": {
+      "put": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Uploads the layer that completes a seal, as a tar archive. Authenticated only by the\npresigned URL handed to the sandbox's worker.",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expires",
+            "in": "query",
+            "description": "Presigned URL expiry, Unix seconds",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "signature",
+            "in": "query",
+            "description": "Presigned URL signature",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "digest",
+            "in": "query",
+            "description": "The layer's digest, `blake3:<64 hex>`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "layer",
+            "in": "query",
+            "description": "`full` for a whole root file system",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/snapshots": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "summary": "Registers a snapshot of uploaded layers, over a base snapshot's layers if one is named.",
+        "operationId": "create_snapshot",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSnapshotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotResource"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/snapshots/import": {
+      "post": {
+        "tags": [
+          "snapshots"
+        ],
+        "summary": "Pulls a public container image from its registry and registers its layers as a snapshot.",
+        "operationId": "import_image",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportImageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/snapshots/{id}": {
+      "get": {
+        "tags": [
+          "snapshots"
+        ],
+        "summary": "Gets a snapshot.",
+        "operationId": "get_snapshot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Gets a task.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/cancel": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Cancels a task and stops its sandbox. Cancelling an ended task changes nothing.",
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/transcript": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "A task's transcript from a position on: what its tool said and did, turn by turn, read from\nits output with secrets masked. Poll with `after` set to the last response's `next`.",
+        "operationId": "transcript",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "path",
+            "description": "The first position to return; 0 when absent.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApprovalResource": {
+        "type": "object",
+        "description": "A human's approval of a revision.",
+        "required": [
+          "revision",
+          "by",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When."
+          },
+          "by": {
+            "type": "string",
+            "description": "Who approved it (`usr_...`)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The revision approved.",
+            "minimum": 0
+          }
+        }
+      },
+      "ApproveRequest": {
+        "type": "object",
+        "description": "Approves a change's latest revision.",
+        "properties": {
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The revision approved; it must be the latest. The latest when omitted.",
+            "minimum": 0
+          }
+        }
+      },
+      "ChangePhase": {
+        "type": "string",
+        "description": "Where a change is.",
+        "enum": [
+          "open",
+          "merged",
+          "closed"
+        ]
+      },
+      "ChangeResource": {
+        "type": "object",
+        "description": "A change.",
+        "required": [
+          "id",
+          "repo",
+          "source_branch",
+          "target_branch",
+          "title",
+          "phase",
+          "revisions",
+          "approvals"
+        ],
+        "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalResource"
+            },
+            "description": "Human approvals, oldest first."
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommentResource"
+            },
+            "description": "Review comments, oldest first."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`chg_...`)."
+          },
+          "merged_commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The target branch's head after the merge, once merged."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ChangePhase",
+            "description": "Where it is."
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository."
+          },
+          "revisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RevisionResource"
+            },
+            "description": "Every revision, oldest first."
+          },
+          "source_branch": {
+            "type": "string",
+            "description": "The branch proposed."
+          },
+          "target_branch": {
+            "type": "string",
+            "description": "The branch it merges into."
+          },
+          "title": {
+            "type": "string",
+            "description": "What it does."
+          }
+        }
+      },
+      "CheckResource": {
+        "type": "object",
+        "description": "One check of a run.",
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The exit code, when it failed."
+          },
+          "job": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The job running it, whose logs are its output."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name in the pipeline."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it did not complete."
+          },
+          "status": {
+            "$ref": "#/components/schemas/CheckStatus",
+            "description": "Where it is."
+          }
+        }
+      },
+      "CheckStatus": {
+        "type": "string",
+        "description": "Where a check is.",
+        "enum": [
+          "pending",
+          "started",
+          "passed",
+          "failed",
+          "errored"
+        ]
+      },
+      "CommentRequest": {
+        "type": "object",
+        "description": "Comments on a change.",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "What it says; 1 to 10 000 characters."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The line of `path` it is about, from 1.",
+            "minimum": 0
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file it is about, relative to the repository root."
+          },
+          "revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The revision; the latest when omitted.",
+            "minimum": 0
+          }
+        }
+      },
+      "CommentResource": {
+        "type": "object",
+        "description": "A reviewer's comment on a revision.",
+        "required": [
+          "revision",
+          "author",
+          "body",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When."
+          },
+          "author": {
+            "type": "string",
+            "description": "Who wrote it: a user (`usr_...`), an agent (`agt_...`) or `system`."
+          },
+          "body": {
+            "type": "string",
+            "description": "What it says."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The line of `path` it is about, from 1.",
+            "minimum": 0
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file it is about."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The revision commented on.",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateSandboxRequest": {
+        "type": "object",
+        "description": "Creates a sandbox from a snapshot.",
+        "required": [
+          "snapshot"
+        ],
+        "properties": {
+          "env": {
+            "type": "object",
+            "description": "Environment variables of every process.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "isolation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Isolation",
+                "description": "Separation from the host; `any` when omitted."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "labels": {
+            "type": "object",
+            "description": "Metadata for grouping and filtering.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Limits",
+                "description": "CPU and memory bounds; secure defaults when omitted."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NetworkPolicy",
+                "description": "Network access; `deny_all` when omitted."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository the sandbox works on (`repo_...`); its secrets become available to jobs."
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "The snapshot to start from."
+          }
+        }
+      },
+      "CreateSnapshotRequest": {
+        "type": "object",
+        "description": "Registers a snapshot from uploaded blobs, optionally on top of an existing snapshot.",
+        "required": [
+          "layers"
+        ],
+        "properties": {
+          "base": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A snapshot whose layers go underneath, such as an imported image."
+          },
+          "layers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Layer"
+            },
+            "description": "Layers, lowest first."
+          }
+        }
+      },
+      "CreateTaskRequest": {
+        "type": "object",
+        "description": "Creates a task on a repository.",
+        "required": [
+          "goal"
+        ],
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "What the agent is asked to do; not empty."
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A tool of the repository's `.igloo/agents.toml`; its default tool when absent."
+          }
+        }
+      },
+      "DesiredState": {
+        "type": "string",
+        "description": "Whether the sandbox should run.",
+        "enum": [
+          "running",
+          "stopped"
+        ]
+      },
+      "ExecRequest": {
+        "type": "object",
+        "description": "Runs a process in a sandbox.",
+        "required": [
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The program and its arguments."
+          },
+          "env": {
+            "type": "object",
+            "description": "Extra environment, layered over the sandbox's.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Secrets of the sandbox's repository to expose as environment variables, by name."
+          },
+          "timeout_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How long the process may run, 1 to 86400 seconds; one hour when omitted.",
+            "minimum": 0
+          }
+        }
+      },
+      "FieldError": {
+        "type": "object",
+        "description": "One invalid field of a request.",
+        "required": [
+          "field",
+          "message"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The field path, such as `\"limits.millicpus\"`."
+          },
+          "message": {
+            "type": "string",
+            "description": "Why it is invalid."
+          }
+        }
+      },
+      "ImportImageRequest": {
+        "type": "object",
+        "description": "Imports a public OCI image as a snapshot.",
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "An image reference, such as `docker.io/library/rust:1.99` or `rust:1.99`."
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`os/architecture`, such as `linux/arm64`; the server's architecture when omitted."
+          }
+        }
+      },
+      "Isolation": {
+        "type": "string",
+        "description": "How strongly a sandbox is separated from its host.",
+        "enum": [
+          "any",
+          "container"
+        ]
+      },
+      "JobPhase": {
+        "type": "string",
+        "description": "Where a job is in its lifecycle.",
+        "enum": [
+          "queued",
+          "leased",
+          "running",
+          "finished",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "JobResource": {
+        "type": "object",
+        "description": "A job.",
+        "required": [
+          "id",
+          "sandbox",
+          "argv",
+          "env",
+          "timeout_seconds",
+          "phase",
+          "submitted_at"
+        ],
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The program and its arguments."
+          },
+          "env": {
+            "type": "object",
+            "description": "Extra environment.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The exit code, when finished."
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, when failed."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`job_...`)."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/JobPhase",
+            "description": "The phase."
+          },
+          "sandbox": {
+            "type": "string",
+            "description": "The sandbox it runs in."
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The repository secrets it is given, by name."
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was submitted."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the process may run.",
+            "minimum": 0
+          }
+        }
+      },
+      "Layer": {
+        "type": "object",
+        "description": "One layer of a snapshot.",
+        "required": [
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "The uploaded blob's digest."
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaType",
+            "description": "How the blob is encoded; `tar` when omitted."
+          }
+        }
+      },
+      "Limits": {
+        "type": "object",
+        "description": "CPU and memory bounds.",
+        "required": [
+          "millicpus",
+          "memory_mib"
+        ],
+        "properties": {
+          "memory_mib": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Memory in MiB, 128 to 262144.",
+            "minimum": 0
+          },
+          "millicpus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "CPU in thousandths of a core, 100 to 64000.",
+            "minimum": 0
+          }
+        }
+      },
+      "MediaType": {
+        "type": "string",
+        "description": "How a layer blob is encoded.",
+        "enum": [
+          "tar",
+          "tar+gzip"
+        ]
+      },
+      "NetworkPolicy": {
+        "type": "string",
+        "description": "Network access of a sandbox.",
+        "enum": [
+          "deny_all",
+          "allow_all"
+        ]
+      },
+      "OpenChangeRequest": {
+        "type": "object",
+        "description": "Opens a change for a branch pushed to the forge.",
+        "required": [
+          "branch",
+          "title"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The branch proposed."
+          },
+          "title": {
+            "type": "string",
+            "description": "What the change does, 1 to 200 characters."
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "An error response. `code` is stable and machine-readable; `title` and `detail` are for\nhumans.",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The stable error code, such as `\"sandbox.not_found\"`."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What went wrong in this occurrence."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "description": "Every invalid field, for validation problems."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The HTTP status code.",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "description": "A short summary of the problem type."
+          },
+          "type": {
+            "type": "string",
+            "description": "A URI identifying the problem type."
+          }
+        }
+      },
+      "RegisterRepoRequest": {
+        "type": "object",
+        "description": "Registers a repository.",
+        "required": [
+          "location"
+        ],
+        "properties": {
+          "default_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch changes merge into; `main` when omitted."
+          },
+          "location": {
+            "type": "string",
+            "description": "`github.com/<owner>/<name>`, or an absolute path on the server for development."
+          },
+          "token_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository secret holding the forge token, such as `GITHUB_TOKEN`."
+          }
+        }
+      },
+      "RepoResource": {
+        "type": "object",
+        "description": "A repository.",
+        "required": [
+          "id",
+          "location",
+          "default_branch"
+        ],
+        "properties": {
+          "default_branch": {
+            "type": "string",
+            "description": "The branch changes merge into."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`repo_...`)."
+          },
+          "location": {
+            "type": "string",
+            "description": "Where it is hosted."
+          },
+          "token_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The secret holding the forge token."
+          }
+        }
+      },
+      "RepoSnapshotRequest": {
+        "type": "object",
+        "description": "Makes a snapshot of a repository at a commit: its checkout under `/workspace`, with a shallow\n`.git`, over `base`. Names exactly one of `branch` (fetched first) and `commit`.",
+        "properties": {
+          "base": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The snapshot to check out over, such as an imported image."
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A branch on the forge."
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A commit of the default branch's history."
+          }
+        }
+      },
+      "RepoSnapshotResource": {
+        "type": "object",
+        "description": "A repository snapshot.",
+        "required": [
+          "snapshot",
+          "commit"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string",
+            "description": "The commit checked out."
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "The snapshot."
+          }
+        }
+      },
+      "RevisionResource": {
+        "type": "object",
+        "description": "One revision of a change.",
+        "required": [
+          "number",
+          "head",
+          "base",
+          "created_at"
+        ],
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "Where it forked from the target branch."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was recorded."
+          },
+          "head": {
+            "type": "string",
+            "description": "The source branch's head."
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its position, from 1.",
+            "minimum": 0
+          }
+        }
+      },
+      "RunPhase": {
+        "type": "string",
+        "description": "Where a run is.",
+        "enum": [
+          "preparing",
+          "warming",
+          "checking",
+          "passed",
+          "failed",
+          "errored"
+        ]
+      },
+      "RunResource": {
+        "type": "object",
+        "description": "A run of a change's revision.",
+        "required": [
+          "id",
+          "change",
+          "revision",
+          "commit",
+          "phase",
+          "checks",
+          "started_at"
+        ],
+        "properties": {
+          "change": {
+            "type": "string",
+            "description": "The change."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckResource"
+            },
+            "description": "Its checks, in pipeline order; empty until prepared."
+          },
+          "commit": {
+            "type": "string",
+            "description": "The commit checked."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it errored."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`run_...`)."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/RunPhase",
+            "description": "Where it is."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The revision's number.",
+            "minimum": 0
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it started."
+          },
+          "warm_job": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The job of the warm build this run did, if any; its logs are the build's output."
+          }
+        }
+      },
+      "SandboxList": {
+        "type": "object",
+        "description": "A page of sandboxes.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SandboxResource"
+            },
+            "description": "The sandboxes, ordered by id."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` to get the next page; absent on the last page."
+          }
+        }
+      },
+      "SandboxPhase": {
+        "type": "string",
+        "description": "Where a sandbox is in its lifecycle.",
+        "enum": [
+          "pending",
+          "scheduled",
+          "starting",
+          "running",
+          "stopping",
+          "stopped",
+          "failed"
+        ]
+      },
+      "SandboxResource": {
+        "type": "object",
+        "description": "A sandbox: its desired spec and observed status.",
+        "required": [
+          "id",
+          "snapshot",
+          "desired",
+          "limits",
+          "network",
+          "isolation",
+          "env",
+          "labels",
+          "phase",
+          "generation",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was created."
+          },
+          "desired": {
+            "$ref": "#/components/schemas/DesiredState",
+            "description": "Whether it should run."
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, when `phase` is `failed`."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The spec generation; bumped by every spec change.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`sbx_...`)."
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/Isolation",
+            "description": "Separation from the host."
+          },
+          "labels": {
+            "type": "object",
+            "description": "Labels.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits",
+            "description": "CPU and memory bounds."
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkPolicy",
+            "description": "Network access."
+          },
+          "observed_generation": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The generation the worker last reported acting on.",
+            "minimum": 0
+          },
+          "phase": {
+            "$ref": "#/components/schemas/SandboxPhase",
+            "description": "The observed phase."
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository it works on."
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "The snapshot it starts from."
+          },
+          "worker": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The worker it is assigned to."
+          }
+        }
+      },
+      "SealPhase": {
+        "type": "string",
+        "description": "Where a seal is.",
+        "enum": [
+          "pending",
+          "sealed",
+          "failed"
+        ]
+      },
+      "SealResource": {
+        "type": "object",
+        "description": "A seal of a sandbox into a snapshot.",
+        "required": [
+          "id",
+          "sandbox",
+          "phase"
+        ],
+        "properties": {
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed: `sandbox_ended` or `worker_error`."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`seal_...`)."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/SealPhase",
+            "description": "Where it is."
+          },
+          "sandbox": {
+            "type": "string",
+            "description": "The sealed sandbox."
+          },
+          "snapshot": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new snapshot, once sealed."
+          }
+        }
+      },
+      "SecretList": {
+        "type": "object",
+        "description": "The names of a repository's secrets. Values are never returned.",
+        "required": [
+          "names"
+        ],
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The names, sorted."
+          }
+        }
+      },
+      "SnapshotResource": {
+        "type": "object",
+        "description": "A snapshot.",
+        "required": [
+          "id",
+          "layers"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Its id: the digest of its manifest."
+          },
+          "layers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Layer"
+            },
+            "description": "Layers, lowest first."
+          }
+        }
+      },
+      "TaskPhase": {
+        "type": "string",
+        "description": "Where a task is.",
+        "enum": [
+          "preparing",
+          "working",
+          "awaiting_review",
+          "done",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "TaskResource": {
+        "type": "object",
+        "description": "A task.",
+        "required": [
+          "id",
+          "repo",
+          "goal",
+          "phase",
+          "turns",
+          "created_at"
+        ],
+        "properties": {
+          "change": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The change its commits form, once it has one."
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit it started from, once settled."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was created."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed."
+          },
+          "goal": {
+            "type": "string",
+            "description": "What the agent is asked to do."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`task_...`)."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/TaskPhase",
+            "description": "Where it is."
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository."
+          },
+          "sandbox": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its sandbox, once started."
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tool, once settled."
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TurnResource"
+            },
+            "description": "Its turns, oldest first."
+          }
+        }
+      },
+      "TranscriptEntry": {
+        "type": "object",
+        "description": "An entry of a task's transcript.",
+        "required": [
+          "position",
+          "turn",
+          "item"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/TranscriptItem",
+            "description": "What happened."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its position in the transcript, from 0.",
+            "minimum": 0
+          },
+          "turn": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The turn it belongs to, from 1.",
+            "minimum": 0
+          }
+        }
+      },
+      "TranscriptItem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Text the tool wrote to the reader.",
+            "required": [
+              "text",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "message"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "description": "The text."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The tool called one of its tools.",
+            "required": [
+              "id",
+              "name",
+              "input",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The call's id, matching its result."
+              },
+              "input": {
+                "type": "string",
+                "description": "Its input, as JSON."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "tool_call"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "description": "The tool called, such as `Bash`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "What a tool call returned.",
+            "required": [
+              "id",
+              "output",
+              "is_error",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The call's id."
+              },
+              "is_error": {
+                "type": "boolean",
+                "description": "Whether the call failed."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "tool_result"
+                ]
+              },
+              "output": {
+                "type": "string",
+                "description": "The output."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A line of output the tool's harness does not read further.",
+            "required": [
+              "text",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "output"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "description": "The line."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The tool reported a failure.",
+            "required": [
+              "text",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "description": "What it said."
+              }
+            }
+          }
+        ],
+        "description": "One thing a tool did or said."
+      },
+      "TranscriptResource": {
+        "type": "object",
+        "description": "A task's transcript from a position on.",
+        "required": [
+          "entries",
+          "next",
+          "idle"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptEntry"
+            },
+            "description": "The entries, oldest first."
+          },
+          "idle": {
+            "type": "boolean",
+            "description": "Whether no turn runs, so no entries follow until another turn starts."
+          },
+          "next": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The position to read from next.",
+            "minimum": 0
+          }
+        }
+      },
+      "TurnResource": {
+        "type": "object",
+        "description": "One turn of a task.",
+        "required": [
+          "number",
+          "job",
+          "prompt",
+          "status"
+        ],
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The job running the tool, whose logs are its output."
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its position, from 1.",
+            "minimum": 0
+          },
+          "prompt": {
+            "type": "string",
+            "description": "What the tool was asked."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How it failed."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TurnStatus",
+            "description": "Where it is."
+          }
+        }
+      },
+      "TurnStatus": {
+        "type": "string",
+        "description": "Where a turn is.",
+        "enum": [
+          "running",
+          "succeeded",
+          "failed"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ]
+}

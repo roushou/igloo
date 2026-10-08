@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://igloo.dev/schemas/agents.schema.json",
+  "title": "Igloo agents",
+  "description": "A repository's trust settings and coding tools, read from .igloo/agents.toml on its default branch.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protected": {
+      "description": "Glob patterns of repository-relative paths whose changes merge only after a human approves them. `*` stays within one directory; `**` crosses directories.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "default_tool": {
+      "description": "The tool tasks use unless they name another; one of tools.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "tools": {
+      "description": "Coding tools by name.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "harness"
+        ],
+        "properties": {
+          "harness": {
+            "description": "How Igloo drives the tool.",
+            "enum": [
+              "claude-code",
+              "codex",
+              "command"
+            ]
+          },
+          "install": {
+            "description": "Shell command installing the tool over the warm snapshot; runs once per agent snapshot, with network access.",
+            "type": "string"
+          },
+          "command": {
+            "description": "For the command harness: the command to run, with the task's goal as its last argument.",
+            "type": "string"
+          },
+          "secrets": {
+            "description": "Repository secrets the tool gets as environment variables, such as its credential.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            }
+          },
+          "timeout_seconds": {
+            "description": "How long one turn may run.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 3600
+          },
+          "max_turns": {
+            "description": "How many turns a task may take.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 10
+          }
+        }
+      }
+    }
+  }
+}

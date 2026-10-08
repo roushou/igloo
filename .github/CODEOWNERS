@@ -1,0 +1,35 @@
+# Protected paths: changes need the owner's review and are never auto-merged.
+
+# Sandbox runtimes
+/crates/igloo-worker/src/runtime/        @roushou
+
+# Policy and authentication
+**/policy/                               @roushou
+**/auth/                                 @roushou
+*.cedar                                  @roushou
+
+# Migrations
+/crates/*/migrations/                    @roushou
+
+# Contract surfaces
+/proto/                                  @roushou
+/schemas/                                @roushou
+/crates/igloo-api/                       @roushou
+/crates/igloo-worker-protocol/           @roushou
+/crates/igloo-control/src/ports/         @roushou
+
+# Build, lint and CI configuration
+/.github/                                @roushou
+/Cargo.toml                              @roushou
+/clippy.toml                             @roushou
+/deny.toml                               @roushou
+/rust-toolchain.toml                     @roushou
+
+# Agent instructions, specs and decisions
+AGENTS.md                                @roushou
+CLAUDE.md                                @roushou
+/docs/specs/                             @roushou
+/docs/adr/                               @roushou
+
+# Igloo's own pipeline and trust settings
+/.igloo/                                 @roushou

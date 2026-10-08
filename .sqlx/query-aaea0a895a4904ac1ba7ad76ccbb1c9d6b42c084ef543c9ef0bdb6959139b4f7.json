@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sequence, stream, data FROM job_logs\n             WHERE job_id = $1 AND sequence > $2 ORDER BY sequence LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sequence",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "job_logs",
+            "name": "sequence"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "stream",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "job_logs",
+            "name": "stream"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "data",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "job_logs",
+            "name": "data"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "aaea0a895a4904ac1ba7ad76ccbb1c9d6b42c084ef543c9ef0bdb6959139b4f7"
+}

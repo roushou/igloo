@@ -1,0 +1,27 @@
+---
+source: crates/igloo-core/src/lib.rs
+expression: forms
+---
+{
+  "actors": [
+    {
+      "kind": "human",
+      "user": "usr_01h455vb4pex5vsknk084sn02q"
+    },
+    {
+      "agent": "agt_00000000000000000000000002",
+      "kind": "agent",
+      "principal": "usr_01h455vb4pex5vsknk084sn02q"
+    },
+    {
+      "component": "controller",
+      "kind": "system"
+    }
+  ],
+  "digest": "blake3:abababababababababababababababababababababababababababababababab",
+  "id": "usr_01h455vb4pex5vsknk084sn02q",
+  "labels": {
+    "session": "42"
+  },
+  "timestamp": "2026-01-01T00:00:00Z"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO repo_secrets (repo_id, name, nonce, ciphertext) VALUES ($1, $2, $3, $4)\n             ON CONFLICT (repo_id, name)\n             DO UPDATE SET nonce = EXCLUDED.nonce, ciphertext = EXCLUDED.ciphertext",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b91c79d154e65cf5735c8e1a7176800cb5ae8e6a8f5e575d96bf45c60f4bf5da"
+}

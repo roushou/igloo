@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO idempotency_keys (actor, key, fingerprint, claimed_at)\n                 VALUES ($1, $2, $3, $4)\n                 ON CONFLICT (actor, key) DO UPDATE\n                 SET fingerprint = EXCLUDED.fingerprint, claimed_at = EXCLUDED.claimed_at,\n                     status = NULL, body = NULL\n                 WHERE (idempotency_keys.status IS NOT NULL AND idempotency_keys.claimed_at < $5)\n                    OR (idempotency_keys.status IS NULL AND idempotency_keys.claimed_at < $6)\n                 RETURNING true AS \"claimed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "claimed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bytea",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "18a1585a4a01824e97b68e478b0b9dde3542b9b5da6ec09b362ac1fbcca03755"
+}

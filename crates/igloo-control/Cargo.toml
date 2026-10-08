@@ -1,0 +1,75 @@
+[package]
+name = "igloo-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axum = "0.8.9"
+blake3.workspace = true
+chacha20poly1305 = "0.11.0"
+eyre.workspace = true
+futures-util = "0.3.34"
+globset = "0.4.20"
+igloo-api.workspace = true
+igloo-core.workspace = true
+igloo-git.workspace = true
+igloo-worker = { path = "../igloo-worker" }
+igloo-worker-protocol.workspace = true
+jiff.workspace = true
+jiff-sqlx = { version = "0.2.0", features = ["postgres"] }
+reqwest.workspace = true
+rmcp = { version = "3.5.0", default-features = false, features = [
+  "macros",
+  "server",
+  "transport-streamable-http-server",
+] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10.9"
+sqlx = { version = "0.9.0", default-features = false, features = [
+  "json",
+  "macros",
+  "migrate",
+  "postgres",
+  "runtime-tokio",
+] }
+tar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = [
+  "fs",
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+tokio-stream.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
+toml = { version = "1.1.6", default-features = false, features = ["parse", "serde"] }
+tonic.workspace = true
+tower = { version = "0.5.3", features = ["util"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["json"] }
+utoipa.workspace = true
+utoipa-axum = "0.3.0"
+uuid = { workspace = true, features = ["v7"] }
+
+[dev-dependencies]
+igloo-core = { workspace = true, features = ["testing"] }
+igloo-git = { workspace = true, features = ["testing"] }
+igloo-rs.workspace = true
+insta = { version = "1.49.0", features = ["json"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,34 @@
+---
+source: crates/igloo-core/src/repo.rs
+expression: events
+---
+[
+  {
+    "type": "registered",
+    "id": "repo_00000000000000000000000001",
+    "location": {
+      "forge": "github",
+      "owner": "roushou",
+      "name": "igloo"
+    },
+    "default_branch": "main",
+    "token": "GITHUB_TOKEN",
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "secret_set",
+    "name": "API_TOKEN"
+  },
+  {
+    "type": "secret_deleted",
+    "name": "API_TOKEN"
+  },
+  {
+    "type": "warm_snapshot_recorded",
+    "key": "blake3:0101010101010101010101010101010101010101010101010101010101010101",
+    "warm": {
+      "snapshot": "blake3:0202020202020202020202020202020202020202020202020202020202020202",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+]

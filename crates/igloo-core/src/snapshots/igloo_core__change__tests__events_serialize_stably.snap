@@ -1,0 +1,83 @@
+---
+source: crates/igloo-core/src/change.rs
+expression: events
+---
+[
+  {
+    "type": "opened",
+    "id": "chg_00000000000000000000000001",
+    "repo": "repo_00000000000000000000000005",
+    "source": "feature",
+    "target": "main",
+    "title": "Add a feature",
+    "revision": {
+      "number": 1,
+      "head": "0000000000000000000000000000000000000001",
+      "base": "0000000000000000000000000000000000000000",
+      "at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "revised",
+    "revision": {
+      "number": 2,
+      "head": "0000000000000000000000000000000000000002",
+      "base": "0000000000000000000000000000000000000000",
+      "at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "closed"
+  },
+  {
+    "type": "approved",
+    "approval": {
+      "revision": 1,
+      "by": "usr_00000000000000000000000007",
+      "at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "commented",
+    "comment": {
+      "revision": 1,
+      "author": {
+        "kind": "human",
+        "user": "usr_00000000000000000000000007"
+      },
+      "body": "Handle the empty case",
+      "path": "src/lib.rs",
+      "line": 3,
+      "at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "changes_requested",
+    "request": {
+      "revision": 1,
+      "by": {
+        "kind": "human",
+        "user": "usr_00000000000000000000000007"
+      },
+      "comments": [
+        {
+          "revision": 1,
+          "author": {
+            "kind": "human",
+            "user": "usr_00000000000000000000000007"
+          },
+          "body": "Handle the empty case",
+          "path": "src/lib.rs",
+          "line": 3,
+          "at": "2026-01-01T00:00:00Z"
+        }
+      ],
+      "at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "merged",
+    "revision": 1,
+    "commit": "0000000000000000000000000000000000000001"
+  }
+]

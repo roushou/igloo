@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package igloo.worker.v1;
+
+// The server side of the worker protocol. A worker dials out, opens one Connect stream and
+// keeps it for its lifetime. Its first message is a Hello; the server answers with a Welcome,
+// then pushes the worker's full desired Assignment and lease grants whenever they change.
+service WorkerGatewayService {
+  rpc Connect(stream ConnectRequest) returns (stream ConnectResponse);
+}
+
+// A message from the worker.
+message ConnectRequest {
+  oneof message {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    SandboxStatus sandbox_status = 3;
+    JobStarted job_started = 4;
+    LogChunk log_chunk = 5;
+    JobResult job_result = 6;
+    SealFailed seal_failed = 7;
+  }
+}
+
+// A message from the server.
+message ConnectResponse {
+  oneof message {
+    Welcome welcome = 1;
+    Assignment assignment = 2;
+    LeaseGrant lease_grant = 3;
+    CancelJob cancel_job = 4;
+    ResultAck result_ack = 5;
+    SealRequest seal_request = 6;
+  }
+}
+
+// The first message of every stream.
+message Hello {
+  // Empty on the worker's first connection; the id from its Welcome afterwards.
+  string worker_id = 1;
+  uint32 protocol_version = 2;
+  Capabilities capabilities = 3;
+  map<string, string> labels = 4;
+}
+
+message Capabilities {
+  Os os = 1;
+  Arch arch = 2;
+  repeated Runtime runtimes = 3;
+}
+
+enum Os {
+  OS_UNSPECIFIED = 0;
+  OS_LINUX = 1;
+  OS_MACOS = 2;
+}
+
+enum Arch {
+  ARCH_UNSPECIFIED = 0;
+  ARCH_X86_64 = 1;
+  ARCH_AARCH64 = 2;
+}
+
+enum Runtime {
+  RUNTIME_UNSPECIFIED = 0;
+  RUNTIME_PROCESS = 1;
+  RUNTIME_OCI = 2;
+  RUNTIME_FIRECRACKER = 3;
+}
+
+// Accepts the worker. It stores worker_id and sends it in every later Hello.
+message Welcome {
+  string worker_id = 1;
+  uint32 protocol_version = 2;
+}
+
+// Every sandbox the worker should hold, with its desired state. Replaces any earlier
+// assignment; sandboxes missing from it should not exist on the worker.
+message Assignment {
+  repeated AssignedSandbox sandboxes = 1;
+}
+
+message AssignedSandbox {
+  string sandbox_id = 1;
+  // The snapshot id, `blake3:<hex>`.
+  string snapshot = 2;
+  DesiredState desired = 3;
+  uint64 generation = 4;
+  uint32 millicpus = 5;
+  uint32 memory_mib = 6;
+  NetworkPolicy network = 7;
+  map<string, string> env = 8;
+  // The snapshot's layers, lowest first.
+  repeated SnapshotLayer layers = 9;
+}
+
+// One layer of a snapshot and where to download it.
+message SnapshotLayer {
+  // The blob digest, `blake3:<hex>`.
+  string digest = 1;
+  LayerMediaType media_type = 2;
+  // A presigned, expiring GET URL for the blob; it needs no other credentials.
+  string url = 3;
+}
+
+enum LayerMediaType {
+  LAYER_MEDIA_TYPE_UNSPECIFIED = 0;
+  LAYER_MEDIA_TYPE_TAR = 1;
+  LAYER_MEDIA_TYPE_TAR_GZIP = 2;
+}
+
+enum DesiredState {
+  DESIRED_STATE_UNSPECIFIED = 0;
+  DESIRED_STATE_RUNNING = 1;
+  DESIRED_STATE_STOPPED = 2;
+}
+
+enum NetworkPolicy {
+  NETWORK_POLICY_UNSPECIFIED = 0;
+  NETWORK_POLICY_DENY_ALL = 1;
+  NETWORK_POLICY_ALLOW_ALL = 2;
+}
+
+// What the worker observed about one sandbox while acting on observed_generation.
+message SandboxStatus {
+  string sandbox_id = 1;
+  SandboxPhase phase = 2;
+  // Set when phase is SANDBOX_PHASE_FAILED.
+  FailureReason failure_reason = 3;
+  uint64 observed_generation = 4;
+}
+
+enum SandboxPhase {
+  SANDBOX_PHASE_UNSPECIFIED = 0;
+  SANDBOX_PHASE_STARTING = 1;
+  SANDBOX_PHASE_RUNNING = 2;
+  SANDBOX_PHASE_STOPPING = 3;
+  SANDBOX_PHASE_STOPPED = 4;
+  SANDBOX_PHASE_FAILED = 5;
+}
+
+enum FailureReason {
+  FAILURE_REASON_UNSPECIFIED = 0;
+  FAILURE_REASON_SNAPSHOT_UNAVAILABLE = 1;
+  FAILURE_REASON_RUNTIME_ERROR = 2;
+}
+
+// A job leased to the worker. Every message about it carries token; the lease lasts ttl_seconds
+// unless a Heartbeat renews it.
+message LeaseGrant {
+  string job_id = 1;
+  uint64 token = 2;
+  uint32 ttl_seconds = 3;
+  string sandbox_id = 4;
+  repeated string argv = 5;
+  map<string, string> env = 6;
+  uint32 timeout_seconds = 7;
+}
+
+// Renews every lease the worker holds. Sent well within the shortest lease ttl.
+message Heartbeat {
+  repeated HeldLease leases = 1;
+}
+
+message HeldLease {
+  string job_id = 1;
+  uint64 token = 2;
+}
+
+message JobStarted {
+  string job_id = 1;
+  uint64 token = 2;
+}
+
+// Output of a running job. offset is the position of data within its stream, so resent chunks
+// are recognized.
+message LogChunk {
+  string job_id = 1;
+  uint64 token = 2;
+  OutputStream stream = 3;
+  uint64 offset = 4;
+  bytes data = 5;
+}
+
+enum OutputStream {
+  OUTPUT_STREAM_UNSPECIFIED = 0;
+  OUTPUT_STREAM_STDOUT = 1;
+  OUTPUT_STREAM_STDERR = 2;
+}
+
+// How a job ended. The worker resends it until a ResultAck arrives.
+message JobResult {
+  string job_id = 1;
+  uint64 token = 2;
+  oneof outcome {
+    int32 exit_code = 3;
+    JobFailure failure = 4;
+  }
+}
+
+enum JobFailure {
+  JOB_FAILURE_UNSPECIFIED = 0;
+  JOB_FAILURE_TIMED_OUT = 1;
+  JOB_FAILURE_SANDBOX_UNAVAILABLE = 2;
+  JOB_FAILURE_EXECUTION_ERROR = 3;
+  // The job's lease expired. Recorded by the server; workers do not report it.
+  JOB_FAILURE_LEASE_LOST = 4;
+}
+
+// The server recorded (accepted) or refused (stale lease) a JobResult. Either way the worker
+// stops resending it.
+message ResultAck {
+  string job_id = 1;
+  uint64 token = 2;
+  bool accepted = 3;
+  string reason = 4;
+}
+
+// The worker should stop the job; its lease is no longer valid.
+message CancelJob {
+  string job_id = 1;
+  uint64 token = 2;
+}
+
+// Seal a sandbox: pack its file system changes as one tar layer and PUT it to `upload_url`,
+// adding `layer=full` to the URL's query when the layer holds the whole root file system rather
+// than changes over the sandbox's snapshot. The upload completes the seal; only a failure is
+// reported back. Sent again after a reconnection while the seal is pending.
+message SealRequest {
+  string seal_id = 1;
+  string sandbox_id = 2;
+  // A presigned, expiring PUT URL; it needs no other credentials.
+  string upload_url = 3;
+}
+
+// The worker could not seal the sandbox.
+message SealFailed {
+  string seal_id = 1;
+  string reason = 2;
+}

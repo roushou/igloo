@@ -1,0 +1,45 @@
+# Trust settings and coding tools for Igloo. Read from the default branch, never from a change.
+# Format: schemas/agents.schema.json.
+
+# Changes touching these paths merge only after a human approves them. Patterns are relative to
+# the repository root; `*` stays within one directory, `**` crosses directories.
+protected = [
+  # Sandbox runtimes
+  "crates/igloo-worker/src/runtime/**",
+  # Policy and authentication
+  "**/policy/**",
+  "**/auth/**",
+  "**/*.cedar",
+  # Migrations
+  "crates/*/migrations/**",
+  # Contract surfaces
+  "proto/**",
+  "schemas/**",
+  "crates/igloo-api/**",
+  "crates/igloo-worker-protocol/**",
+  "crates/igloo-control/src/ports/**",
+  # Build, lint and CI configuration
+  ".github/**",
+  "Cargo.toml",
+  "clippy.toml",
+  "deny.toml",
+  "rust-toolchain.toml",
+  # Agent instructions, specs, decisions and trust settings
+  "**/AGENTS.md",
+  "**/CLAUDE.md",
+  "docs/specs/**",
+  "docs/adr/**",
+  ".igloo/**",
+]
+
+# The coding tool tasks use unless they name another.
+default_tool = "claude-code"
+
+[tools.claude-code]
+harness = "claude-code"
+# Runs once over the warm snapshot; the result is cached as the agent snapshot.
+install = "apt-get update -qq && apt-get install -qq -y --no-install-recommends curl ca-certificates >/dev/null && curl -fsSL https://claude.ai/install.sh | bash && ln -sf /root/.local/bin/claude /usr/local/bin/claude"
+# A subscription token from `claude setup-token`, stored with `igloo secret set`.
+secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
+timeout_seconds = 3600
+max_turns = 10

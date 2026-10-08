@@ -1,0 +1,4 @@
+[profile.ci]
+# Report every failure in one run and never hide flakiness behind retries.
+retries = 0
+fail-fast = false

@@ -1,0 +1,41 @@
+---
+source: crates/igloo-core/src/worker/mod.rs
+expression: events
+---
+[
+  {
+    "type": "registered",
+    "id": "wrk_00000000000000000000000001",
+    "capabilities": {
+      "os": "linux",
+      "arch": "x86_64",
+      "runtimes": [
+        "process"
+      ],
+      "protocol": 1
+    },
+    "labels": {}
+  },
+  {
+    "type": "connected",
+    "capabilities": {
+      "os": "linux",
+      "arch": "x86_64",
+      "runtimes": [
+        "oci"
+      ],
+      "protocol": 1
+    }
+  },
+  {
+    "type": "disconnected",
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "drain_requested",
+    "generation": 2
+  },
+  {
+    "type": "marked_lost"
+  }
+]

@@ -1,0 +1,51 @@
+[package]
+name = "igloo-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+blake3.workspace = true
+eyre.workspace = true
+flate2 = "1.1.10"
+igloo-core.workspace = true
+igloo-worker-protocol.workspace = true
+prost.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = [
+  "fs",
+  "io-util",
+  "macros",
+  "process",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+tokio-stream.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rtnetlink = "0.23.0"
+rustix = { version = "1.1.5", features = ["fs", "mount", "thread"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "test-util"] }
+tonic = { workspace = true, features = ["router", "server"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

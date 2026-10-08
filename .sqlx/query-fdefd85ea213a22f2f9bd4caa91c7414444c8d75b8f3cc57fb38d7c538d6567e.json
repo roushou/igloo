@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO checkpoints (consumer, position) VALUES ($1, $2)\n             ON CONFLICT (consumer) DO UPDATE SET position = EXCLUDED.position",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fdefd85ea213a22f2f9bd4caa91c7414444c8d75b8f3cc57fb38d7c538d6567e"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO job_logs (job_id, stream, byte_offset, data) VALUES ($1, $2, $3, $4)\n             ON CONFLICT (job_id, stream, byte_offset) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "177df4aac6370ebedfa94e0d9dc1b7df0225ecf1264cca4d02a9ebd2cc77698f"
+}

@@ -1,0 +1,26 @@
+[package]
+name = "igloo-worker-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.cargo-shear]
+# Used only by the code tonic-prost-build generates into OUT_DIR, which shear cannot see.
+ignored = ["prost", "tonic-prost"]
+
+[dependencies]
+igloo-core.workspace = true
+prost.workspace = true
+thiserror.workspace = true
+tonic = { workspace = true, default-features = false, features = ["codegen"] }
+tonic-prost = "0.14.6"
+
+[build-dependencies]
+protox = "0.9.1"
+tonic-prost-build = "0.14.6"
+
+[lints]
+workspace = true

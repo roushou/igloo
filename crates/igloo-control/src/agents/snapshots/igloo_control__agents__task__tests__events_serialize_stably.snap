@@ -1,0 +1,54 @@
+---
+source: crates/igloo-control/src/agents/task.rs
+expression: working(10)
+---
+[
+  {
+    "type": "created",
+    "id": "task_00000000000000000000000001",
+    "repo": "repo_00000000000000000000000001",
+    "goal": "Fix the bug",
+    "tool": null,
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "prepared",
+    "prepared": {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tool": "agent",
+      "spec": {
+        "harness": "command",
+        "install": "install",
+        "command": "./agent",
+        "secrets": [],
+        "timeout_seconds": 60,
+        "max_turns": 10
+      },
+      "settings": {
+        "isolation": "any",
+        "limits": {
+          "millicpus": 1000,
+          "memory_mib": 2048
+        },
+        "network": "deny_all",
+        "env": {},
+        "secrets": []
+      },
+      "base": null,
+      "warm": null
+    }
+  },
+  {
+    "type": "ready",
+    "snapshot": "blake3:0303030303030303030303030303030303030303030303030303030303030303"
+  },
+  {
+    "type": "sandbox_started",
+    "sandbox": "sbx_0000000000000000000000000a"
+  },
+  {
+    "type": "turn_started",
+    "job": "job_0000000000000000000000000m",
+    "prompt": "Fix the bug"
+  }
+]

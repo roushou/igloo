@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://igloo.dev/schemas/pipeline.schema.json",
+  "title": "Igloo pipeline",
+  "description": "The checks Igloo runs on every revision of a repository's changes, read from .igloo/pipeline.toml at the revision's commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "description": "A container image the checkout goes over, such as rust:1.99-slim. Imported once per repository. Exclusive with base.",
+      "type": "string"
+    },
+    "platform": {
+      "description": "The image's os/architecture, such as linux/arm64; the server's when unset.",
+      "type": "string"
+    },
+    "base": {
+      "description": "A snapshot id the checkout goes over. Exclusive with image.",
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "warm": {
+      "description": "Builds dependencies once per lockfile; checks run over the result.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "description": "The shell command building dependencies.",
+          "type": "string"
+        },
+        "lockfiles": {
+          "description": "Files pinning dependencies; changing any builds a new warm snapshot.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "network": {
+          "description": "Network access while building; allow_all when unset.",
+          "enum": [
+            "deny_all",
+            "allow_all"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "default": 3600
+        }
+      }
+    },
+    "sandbox": {
+      "description": "The sandbox checks run in.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "isolation": {
+          "enum": [
+            "any",
+            "container"
+          ],
+          "default": "any"
+        },
+        "network": {
+          "enum": [
+            "deny_all",
+            "allow_all"
+          ],
+          "default": "deny_all"
+        },
+        "millicpus": {
+          "description": "CPU in thousandths of a core.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 64000,
+          "default": 1000
+        },
+        "memory_mib": {
+          "description": "Memory in MiB.",
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 262144,
+          "default": 2048
+        }
+      }
+    },
+    "env": {
+      "description": "Environment of every job.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Z_][A-Z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "secrets": {
+      "description": "Repository secrets given to every job as environment variables.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z_][A-Z0-9_]*$",
+        "maxLength": 64
+      }
+    },
+    "checks": {
+      "description": "The checks, in order; a revision passes when every check exits 0.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "run"
+        ],
+        "properties": {
+          "name": {
+            "description": "Unique in the pipeline.",
+            "type": "string",
+            "minLength": 1
+          },
+          "run": {
+            "description": "The shell command.",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 3600
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "checks"
+  ]
+}

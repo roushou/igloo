@@ -1,0 +1,36 @@
+---
+source: crates/igloo-core/src/build.rs
+expression: started()
+---
+[
+  {
+    "type": "requested",
+    "id": "bld_00000000000000000000000001",
+    "spec": {
+      "repo": "repo_00000000000000000000000001",
+      "key": "blake3:0707070707070707070707070707070707070707070707070707070707070707",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sandbox": {
+        "snapshot": "blake3:0101010101010101010101010101010101010101010101010101010101010101",
+        "desired": "running",
+        "limits": {
+          "millicpus": 1000,
+          "memory_mib": 2048
+        },
+        "network": "deny_all",
+        "isolation": "any",
+        "env": {},
+        "labels": {}
+      },
+      "command": "make deps",
+      "secrets": [],
+      "timeout": "PT1M"
+    },
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "started",
+    "sandbox": "sbx_0000000000000000000000000a",
+    "job": "job_0000000000000000000000000m"
+  }
+]

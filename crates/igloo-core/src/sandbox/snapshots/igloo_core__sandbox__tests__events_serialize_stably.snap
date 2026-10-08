@@ -1,0 +1,39 @@
+---
+source: crates/igloo-core/src/sandbox/mod.rs
+expression: events
+---
+[
+  {
+    "type": "created",
+    "id": "sbx_00000000000000000000000001",
+    "spec": {
+      "snapshot": "blake3:0707070707070707070707070707070707070707070707070707070707070707",
+      "desired": "running",
+      "limits": {
+        "millicpus": 1000,
+        "memory_mib": 2048
+      },
+      "network": "deny_all",
+      "isolation": "any",
+      "env": {},
+      "labels": {}
+    },
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "scheduled",
+    "worker": "wrk_0000000000000000000000001a"
+  },
+  {
+    "type": "stop_requested",
+    "generation": 2
+  },
+  {
+    "type": "status_recorded",
+    "phase": {
+      "phase": "failed",
+      "reason": "runtime_error"
+    },
+    "observed_generation": 2
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(MAX(sequence), 0) AS \"latest!\" FROM events",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "latest!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "283d2432a5933b9abf60acf9742282605397f659189ebeef571730e24caaf776"
+}

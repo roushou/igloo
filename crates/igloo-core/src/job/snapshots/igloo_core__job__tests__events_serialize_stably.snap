@@ -1,0 +1,48 @@
+---
+source: crates/igloo-core/src/job/mod.rs
+expression: events
+---
+[
+  {
+    "type": "submitted",
+    "id": "job_00000000000000000000000001",
+    "spec": {
+      "kind": "execute",
+      "sandbox": "sbx_00000000000000000000000009",
+      "argv": [
+        "cargo",
+        "test"
+      ],
+      "env": {},
+      "secrets": [],
+      "timeout": "PT1H"
+    },
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "leased",
+    "lease": {
+      "worker": "wrk_00000000000000000000000001",
+      "token": 1,
+      "expires_at": "2026-01-01T00:00:30Z"
+    }
+  },
+  {
+    "type": "lease_renewed",
+    "expires_at": "2026-01-01T00:01:00Z"
+  },
+  {
+    "type": "started"
+  },
+  {
+    "type": "finished",
+    "exit_code": 0
+  },
+  {
+    "type": "failed",
+    "reason": "timed_out"
+  },
+  {
+    "type": "cancelled"
+  }
+]

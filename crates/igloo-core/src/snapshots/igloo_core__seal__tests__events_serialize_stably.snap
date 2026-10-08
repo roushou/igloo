@@ -1,0 +1,21 @@
+---
+source: crates/igloo-core/src/seal.rs
+expression: events
+---
+[
+  {
+    "type": "requested",
+    "id": "seal_00000000000000000000000001",
+    "sandbox": "sbx_00000000000000000000000009",
+    "base": "blake3:0101010101010101010101010101010101010101010101010101010101010101",
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "sealed",
+    "snapshot": "blake3:0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  {
+    "type": "failed",
+    "reason": "worker_error"
+  }
+]

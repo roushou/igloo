@@ -1,0 +1,14 @@
+# Local Postgres for development and `cargo sqlx prepare`.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: igloo
+      POSTGRES_PASSWORD: igloo
+      POSTGRES_DB: igloo
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "igloo"]
+      interval: 1s
+      retries: 30

@@ -1,0 +1,32 @@
+# The checks Igloo runs on its own changes. Format: schemas/pipeline.schema.json.
+
+image = "docker.io/library/rust:1.99-slim"
+
+[warm]
+# Installs git and the toolchain's components and builds every dependency once per lockfile.
+command = "apt-get update -qq && apt-get install -qq -y --no-install-recommends git >/dev/null && cargo fetch --locked && cargo clippy --workspace --all-targets --locked && cargo test --workspace --lib --locked --no-run"
+lockfiles = ["Cargo.lock", "rust-toolchain.toml"]
+timeout_seconds = 3600
+
+[sandbox]
+isolation = "container"
+millicpus = 4000
+memory_mib = 8192
+
+[env]
+SQLX_OFFLINE = "true"
+CARGO_TERM_COLOR = "never"
+
+[[checks]]
+name = "format"
+run = "cargo fmt --check"
+timeout_seconds = 300
+
+[[checks]]
+name = "clippy"
+run = "cargo clippy --workspace --all-targets --locked --offline -- -D warnings"
+
+[[checks]]
+name = "test"
+# Postgres tests need Docker, which sandboxes do not have; GitHub Actions runs them.
+run = "cargo test --workspace --lib --locked --offline -- --skip postgres"

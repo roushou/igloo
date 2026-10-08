@@ -1,0 +1,16 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+disallowed-methods = [
+  { path = "std::time::SystemTime::now", reason = "inject Clock" },
+  { path = "jiff::Timestamp::now", reason = "inject Clock" },
+  # allow-invalid: these functions exist only when uuid's v4/v7 features are enabled.
+  { path = "uuid::Uuid::new_v4", reason = "inject IdGenerator", allow-invalid = true },
+  { path = "uuid::Uuid::now_v7", reason = "inject IdGenerator", allow-invalid = true },
+  # allow-invalid: these functions exist only when tokio's rt feature is enabled.
+  { path = "tokio::spawn", reason = "use TaskSupervisor::spawn", allow-invalid = true },
+  { path = "tokio::task::spawn", reason = "use TaskSupervisor::spawn", allow-invalid = true },
+]
+
+doc-valid-idents = ["CloudEvents", "OpenAPI", "TypeID", "UUIDv7", ".."]

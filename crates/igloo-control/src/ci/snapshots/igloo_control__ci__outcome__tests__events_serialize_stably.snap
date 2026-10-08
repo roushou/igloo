@@ -1,0 +1,37 @@
+---
+source: crates/igloo-control/src/ci/outcome.rs
+expression: "vec![merged(), OutcomeEvent::Reverted { commit: commit(9) },]"
+---
+[
+  {
+    "type": "recorded",
+    "id": "out_00000000000000000000000001",
+    "record": {
+      "repo": "repo_00000000000000000000000001",
+      "change": "chg_00000000000000000000000002",
+      "verdict": {
+        "verdict": "merged",
+        "commit": "0000000000000000000000000000000000000002"
+      },
+      "revision": 2,
+      "checks": [
+        {
+          "name": "test",
+          "outcome": {
+            "outcome": "passed"
+          }
+        }
+      ],
+      "approvals": [],
+      "commits": [
+        "0000000000000000000000000000000000000001",
+        "0000000000000000000000000000000000000002"
+      ],
+      "at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "type": "reverted",
+    "commit": "0000000000000000000000000000000000000009"
+  }
+]

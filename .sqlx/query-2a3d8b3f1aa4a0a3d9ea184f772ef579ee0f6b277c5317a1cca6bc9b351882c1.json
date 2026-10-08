@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM repo_secrets WHERE repo_id = $1 AND name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2a3d8b3f1aa4a0a3d9ea184f772ef579ee0f6b277c5317a1cca6bc9b351882c1"
+}

@@ -1,0 +1,25 @@
+[package]
+name = "igloo-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+# Exposes the `Fixture` test repository to other crates' tests.
+testing = []
+
+[dependencies]
+igloo-core.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "process", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "process", "rt", "time"] }
+
+[lints]
+workspace = true

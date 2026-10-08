@@ -1,0 +1,24 @@
+---
+source: crates/igloo-control/src/inbound/rest/tests.rs
+expression: body
+---
+{
+  "code": "validation.invalid",
+  "errors": [
+    {
+      "field": "labels.Bad Key",
+      "message": "label key must be 1 to 64 characters of [a-z0-9._/-], starting and ending with [a-z0-9]"
+    },
+    {
+      "field": "limits.millicpus",
+      "message": "must be in 100..=64000"
+    },
+    {
+      "field": "snapshot",
+      "message": "digest must start with \"blake3:\""
+    }
+  ],
+  "status": 422,
+  "title": "Invalid request",
+  "type": "https://igloo.dev/problems/validation.invalid"
+}

@@ -1,0 +1,8 @@
+---
+source: crates/igloo-core/src/labels.rs
+expression: labels
+---
+{
+  "session": "42",
+  "task": "fix-flaky"
+}

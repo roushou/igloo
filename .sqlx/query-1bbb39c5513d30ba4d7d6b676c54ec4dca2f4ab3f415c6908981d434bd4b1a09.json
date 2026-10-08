@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO streams (subject, entity, version) VALUES ($1, $2, $3)\n                 ON CONFLICT (subject) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1bbb39c5513d30ba4d7d6b676c54ec4dca2f4ab3f415c6908981d434bd4b1a09"
+}

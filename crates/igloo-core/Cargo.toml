@@ -1,0 +1,27 @@
+[package]
+name = "igloo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+# Exposes the `Scenario` test harness to other crates' tests.
+testing = []
+
+[dependencies]
+bon = "3.10.2"
+jiff.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+insta = { version = "1.49.0", features = ["json"] }
+proptest = "1.11.0"
+serde_json.workspace = true
+
+[lints]
+workspace = true
