@@ -14,8 +14,9 @@ use crate::ports::{BlobStore, Forge, ForgeError, StorageError};
 /// Snapshots of repositories at commits: a base snapshot (such as an imported image) and a
 /// layer holding the checkout under `workspace/`, with a shallow `.git` at the commit. Over a
 /// warm snapshot, the layer also deletes the files removed since the warm snapshot's commit and
-/// replaces its `.git`. Layer entries are owned by root, with fixed times and modes that keep
-/// only the executable bit, whoever the server runs as.
+/// replaces its `.git`. Layer entries keep their files' modes and modification times, which
+/// build tools compare against warm build output, and are owned by root whoever the server runs
+/// as.
 #[derive(Clone)]
 pub struct RepoSnapshots {
     forge: Arc<dyn Forge>,
@@ -116,9 +117,7 @@ impl RepoSnapshots {
     ) -> io::Result<Digest> {
         let file = std::fs::File::create(archive)?;
         let mut builder = tar::Builder::new(io::BufWriter::new(file));
-        builder.mode(tar::HeaderMode::Deterministic);
-        builder.follow_symlinks(false);
-        builder.append_dir_all(Self::ROOT, tree)?;
+        Self::append(&mut builder, Path::new(Self::ROOT), tree)?;
         for path in deleted {
             let path = Path::new(path);
             let Some(name) = path.file_name() else {
@@ -144,6 +143,37 @@ impl RepoSnapshots {
         let mut hasher = blake3::Hasher::new();
         hasher.update_reader(std::fs::File::open(archive)?)?;
         Ok(Digest::from_blake3(*hasher.finalize().as_bytes()))
+    }
+
+    /// Appends `path` as `name`, and a directory's entries beneath it in name order, owned by
+    /// root. Symbolic links are stored as links.
+    fn append(
+        builder: &mut tar::Builder<impl io::Write>,
+        name: &Path,
+        path: &Path,
+    ) -> io::Result<()> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_metadata_in_mode(&metadata, tar::HeaderMode::Complete);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_username("root")?;
+        header.set_groupname("root")?;
+        if metadata.is_dir() {
+            header.set_size(0);
+            builder.append_data(&mut header, name, io::empty())?;
+            let mut entries = std::fs::read_dir(path)?.collect::<io::Result<Vec<_>>>()?;
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                Self::append(builder, &name.join(entry.file_name()), &entry.path())?;
+            }
+            Ok(())
+        } else if metadata.file_type().is_symlink() {
+            header.set_size(0);
+            builder.append_link(&mut header, name, std::fs::read_link(path)?)
+        } else {
+            builder.append_data(&mut header, name, std::fs::File::open(path)?)
+        }
     }
 
     fn marker(builder: &mut tar::Builder<impl io::Write>, path: &PathBuf) -> io::Result<()> {
@@ -190,7 +220,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn layers_are_owned_by_root_and_keep_the_executable_bit() {
+    fn layers_are_owned_by_root_and_keep_modes_times_and_links() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().expect("dir");
@@ -200,11 +230,21 @@ mod tests {
         std::fs::write(tree.join("bin/run"), "#!/bin/sh\n").expect("script");
         std::fs::set_permissions(tree.join("bin/run"), std::fs::Permissions::from_mode(0o700))
             .expect("chmod");
+        std::os::unix::fs::symlink("run", tree.join("bin/alias")).expect("symlink");
+        let written = std::fs::metadata(tree.join("README"))
+            .expect("metadata")
+            .modified()
+            .expect("mtime")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_secs();
         let archive = dir.path().join("layer.tar");
         RepoSnapshots::pack(&tree, &[], false, &archive).expect("pack");
 
         let mut entries = tar::Archive::new(std::fs::File::open(&archive).expect("open"));
         let mut modes = std::collections::BTreeMap::new();
+        let mut times = std::collections::BTreeMap::new();
+        let mut links = std::collections::BTreeMap::new();
         for entry in entries.entries().expect("entries") {
             let entry = entry.expect("entry");
             let header = entry.header();
@@ -213,9 +253,18 @@ mod tests {
                 (0, 0)
             );
             let path = entry.path().expect("path").display().to_string();
-            modes.insert(path, header.mode().expect("mode") & 0o777);
+            modes.insert(path.clone(), header.mode().expect("mode") & 0o777);
+            times.insert(path.clone(), header.mtime().expect("mtime"));
+            if let Some(target) = entry.link_name().expect("link") {
+                links.insert(path, target.display().to_string());
+            }
         }
-        assert_eq!(modes.get("workspace/README"), Some(&0o644));
-        assert_eq!(modes.get("workspace/bin/run"), Some(&0o755));
+        assert_eq!(modes.get("workspace/bin/run"), Some(&0o700));
+        assert_eq!(times.get("workspace/README"), Some(&written), "real times");
+        assert_eq!(
+            links.get("workspace/bin/alias").map(String::as_str),
+            Some("run")
+        );
+        assert!(modes.contains_key("workspace"), "the root directory");
     }
 }
