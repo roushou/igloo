@@ -118,6 +118,8 @@ install_units() {
 }
 
 update() {
+  # Packages added since the host was installed.
+  install_packages
   # shellcheck source=/dev/null
   [[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"
   log "Build"
