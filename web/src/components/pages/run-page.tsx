@@ -1,13 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Elapsed } from "@/components/elapsed";
-import { Await, Fact, Page, Rows } from "@/components/page";
+import { FileText } from "lucide-react";
+import { ChecksStrip } from "@/components/checks-strip";
+import { CheckTime, Timing } from "@/components/elapsed";
+import { Await, Fact, Page, Section } from "@/components/page";
+import { RelativeTime } from "@/components/relative-time";
 import { ShortId } from "@/components/short-id";
 import { StatusPill } from "@/components/status-pill";
 import { format } from "@/lib/format";
 import { queries } from "@/lib/queries";
 import { status } from "@/lib/status";
 import { runStep } from "@/lib/steps";
+import { timing } from "@/lib/timing";
 
 /** A run: the checks of one revision, with a link to each check's log. */
 export function RunPage({ id }: { id: string }) {
@@ -18,14 +22,22 @@ export function RunPage({ id }: { id: string }) {
         const state = status.run(run);
         return (
           <Page
-            title="Run"
+            crumbs={[
+              { label: "Changes", link: { to: "/changes" } },
+              {
+                label: <span className="font-mono text-sm">{format.shortId(run.change)}</span>,
+                link: { to: "/changes/$id", params: { id: run.change } },
+              },
+              { label: <span className="font-mono text-sm">{format.shortId(run.id)}</span> },
+            ]}
+            title={`Run of revision ${run.revision}`}
             meta={
               <>
                 <StatusPill state={state} />
                 {state === "running" ? (
                   <>
                     <span>{runStep(run)}</span>
-                    <Elapsed since={run.started_at} />
+                    <Timing {...timing.run(run)} />
                   </>
                 ) : null}
                 <Fact label="Run">
@@ -35,7 +47,7 @@ export function RunPage({ id }: { id: string }) {
                   <Link
                     to="/changes/$id"
                     params={{ id: run.change }}
-                    className="font-mono text-xs hover:underline"
+                    className="font-mono text-sm hover:underline"
                   >
                     {format.shortId(run.change)}
                   </Link>
@@ -46,43 +58,59 @@ export function RunPage({ id }: { id: string }) {
                 <Fact label="Commit">
                   <ShortId id={run.commit} />
                 </Fact>
-                <Fact label="Started">{format.time(run.started_at)}</Fact>
+                <Fact label="Started">
+                  <RelativeTime at={run.started_at} />
+                </Fact>
               </>
             }
           >
             {run.error ? (
               <p
                 role="alert"
-                className="rounded-lg border border-errored/40 bg-errored-soft px-4 py-3 text-sm text-errored"
+                className="rounded-lg border border-errored/30 bg-errored-soft px-4 py-3 text-base text-errored"
               >
                 {run.error}
               </p>
             ) : null}
             {run.warm_job ? (
-              <p className="text-sm">
-                <Link to="/jobs/$id" params={{ id: run.warm_job }} className="hover:underline">
-                  Warm-up log
-                </Link>
-              </p>
+              <Link
+                to="/jobs/$id"
+                params={{ id: run.warm_job }}
+                className="flex items-center gap-2 text-base text-muted-foreground hover:text-foreground"
+              >
+                <FileText className="size-4" />
+                Warm-up log
+              </Link>
             ) : null}
-            <Rows label="Checks">
-              {run.checks.map((check) => (
-                <li key={check.name} className="flex items-center gap-3 px-4 py-3 text-sm">
-                  <StatusPill state={status.check(check)} className="w-24" />
-                  <span className="font-medium">{check.name}</span>
-                  {check.reason ? <span className="text-errored">{check.reason}</span> : null}
-                  {check.job ? (
-                    <Link
-                      to="/jobs/$id"
-                      params={{ id: check.job }}
-                      className="ml-auto text-xs hover:underline"
-                    >
-                      Log
-                    </Link>
-                  ) : null}
-                </li>
-              ))}
-            </Rows>
+            <Section
+              title="Checks"
+              count={run.checks.length}
+              action={<ChecksStrip checks={run.checks} />}
+            >
+              <ul aria-label="Checks" className="divide-y divide-border border-y">
+                {run.checks.map((check) => (
+                  <li key={check.name} className="flex items-center gap-3 px-4 py-2.5 text-base">
+                    <StatusPill state={status.check(check)} className="w-24 justify-start" />
+                    <span className="font-medium">{check.name}</span>
+                    {check.reason ? (
+                      <span className="min-w-0 truncate text-errored">{check.reason}</span>
+                    ) : null}
+                    <div className="ml-auto flex items-center gap-2">
+                      <CheckTime check={check} />
+                      {check.job ? (
+                        <Link
+                          to="/jobs/$id"
+                          params={{ id: check.job }}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          Log
+                        </Link>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Section>
           </Page>
         );
       }}

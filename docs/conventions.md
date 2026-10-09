@@ -343,3 +343,16 @@ apply there; these do.
   the server.
 - Tests sit beside the code as `*.test.ts(x)`, render the real route tree, and stub the server at
   `fetch`.
+- Look: every colour, font and size is a token in `src/styles.css`; components use the token
+  classes (`bg-card`, `text-muted-foreground`, `text-expedition`), never a hex value, and the six
+  type sizes of that file only. Orange (`expedition`) marks what waits on the user and nothing else.
+  A state is shown by `StatusPill`, with the six states of `lib/status.ts`.
+- Motion goes through `motion` and `lib/motion.ts`, which turns every transition off under
+  `prefers-reduced-motion`. Floating surfaces (`Modal`, menus, toasts) are the only elevation.
+- Keyboard: a shortcut is added to `SHORTCUTS` in `lib/shortcuts.tsx`, which the `?` dialog lists,
+  and tested. A page offers its actions to ⌘K with `useRegisterCommands` and a memoised list; a
+  command whose rule is not met stays listed with its reason in `unmet`.
+- Server times the API does not report yet have one place each in `lib/timing.ts`; pages render
+  from it, so a new field is wired there.
+- Tests mount the router on the document (`renderApp`), as the browser does, and run as a narrow
+  viewport that asks for reduced motion.

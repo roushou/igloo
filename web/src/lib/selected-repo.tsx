@@ -30,9 +30,14 @@ export function useSelectedRepo(): SelectedRepo {
  * The repository the pages show: the selected one, or the first when none is selected or the
  * selection no longer exists. `pending` is true while the repositories load.
  */
-export function useCurrentRepo(): { repo: Repo | null; pending: boolean; error: unknown } {
+export function useCurrentRepo(): {
+  repo: Repo | null;
+  pending: boolean;
+  error: unknown;
+  retry: () => unknown;
+} {
   const repos = useQuery(queries.repos());
   const selected = useSelectedRepo();
   const repo = repos.data?.find((repo) => repo.id === selected.id) ?? repos.data?.[0] ?? null;
-  return { repo, pending: repos.isPending, error: repos.error };
+  return { repo, pending: repos.isPending, error: repos.error, retry: repos.refetch };
 }

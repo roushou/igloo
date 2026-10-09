@@ -12,8 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppChangesRouteImport } from './routes/_app/changes'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSystemRouteImport } from './routes/_app/system'
+import { Route as AppTasksRouteImport } from './routes/_app/tasks'
 import { Route as AppChangesIndexRouteImport } from './routes/_app/changes.index'
 import { Route as AppChangesIdRouteImport } from './routes/_app/changes.$id'
 import { Route as AppJobsIdRouteImport } from './routes/_app/jobs.$id'
@@ -35,6 +37,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppChangesRoute = AppChangesRouteImport.update({
+  id: '/changes',
+  path: '/changes',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -45,15 +52,20 @@ const AppSystemRoute = AppSystemRouteImport.update({
   path: '/system',
   getParentRoute: () => AppRoute,
 } as any)
-const AppChangesIndexRoute = AppChangesIndexRouteImport.update({
-  id: '/changes/',
-  path: '/changes/',
+const AppTasksRoute = AppTasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => AppRoute,
 } as any)
+const AppChangesIndexRoute = AppChangesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppChangesRoute,
+} as any)
 const AppChangesIdRoute = AppChangesIdRouteImport.update({
-  id: '/changes/$id',
-  path: '/changes/$id',
-  getParentRoute: () => AppRoute,
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AppChangesRoute,
 } as any)
 const AppJobsIdRoute = AppJobsIdRouteImport.update({
   id: '/jobs/$id',
@@ -66,21 +78,23 @@ const AppRunsIdRoute = AppRunsIdRouteImport.update({
   getParentRoute: () => AppRoute,
 } as any)
 const AppTasksIndexRoute = AppTasksIndexRouteImport.update({
-  id: '/tasks/',
-  path: '/tasks/',
-  getParentRoute: () => AppRoute,
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppTasksRoute,
 } as any)
 const AppTasksIdRoute = AppTasksIdRouteImport.update({
-  id: '/tasks/$id',
-  path: '/tasks/$id',
-  getParentRoute: () => AppRoute,
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AppTasksRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/signin': typeof SigninRoute
+  '/changes': typeof AppChangesRouteWithChildren
   '/settings': typeof AppSettingsRoute
   '/system': typeof AppSystemRoute
+  '/tasks': typeof AppTasksRouteWithChildren
   '/changes/$id': typeof AppChangesIdRoute
   '/jobs/$id': typeof AppJobsIdRoute
   '/runs/$id': typeof AppRunsIdRoute
@@ -104,8 +118,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/signin': typeof SigninRoute
+  '/_app/changes': typeof AppChangesRouteWithChildren
   '/_app/settings': typeof AppSettingsRoute
   '/_app/system': typeof AppSystemRoute
+  '/_app/tasks': typeof AppTasksRouteWithChildren
   '/_app/': typeof AppIndexRoute
   '/_app/changes/$id': typeof AppChangesIdRoute
   '/_app/jobs/$id': typeof AppJobsIdRoute
@@ -119,8 +135,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/signin'
+    | '/changes'
     | '/settings'
     | '/system'
+    | '/tasks'
     | '/changes/$id'
     | '/jobs/$id'
     | '/runs/$id'
@@ -143,8 +161,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/signin'
+    | '/_app/changes'
     | '/_app/settings'
     | '/_app/system'
+    | '/_app/tasks'
     | '/_app/'
     | '/_app/changes/$id'
     | '/_app/jobs/$id'
@@ -182,6 +202,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/changes': {
+      id: '/_app/changes'
+      path: '/changes'
+      fullPath: '/changes'
+      preLoaderRoute: typeof AppChangesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings': {
       id: '/_app/settings'
       path: '/settings'
@@ -196,19 +223,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSystemRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/tasks': {
+      id: '/_app/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof AppTasksRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/changes/': {
       id: '/_app/changes/'
-      path: '/changes'
+      path: '/'
       fullPath: '/changes/'
       preLoaderRoute: typeof AppChangesIndexRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppChangesRoute
     }
     '/_app/changes/$id': {
       id: '/_app/changes/$id'
-      path: '/changes/$id'
+      path: '/$id'
       fullPath: '/changes/$id'
       preLoaderRoute: typeof AppChangesIdRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppChangesRoute
     }
     '/_app/jobs/$id': {
       id: '/_app/jobs/$id'
@@ -226,43 +260,67 @@ declare module '@tanstack/react-router' {
     }
     '/_app/tasks/': {
       id: '/_app/tasks/'
-      path: '/tasks'
+      path: '/'
       fullPath: '/tasks/'
       preLoaderRoute: typeof AppTasksIndexRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppTasksRoute
     }
     '/_app/tasks/$id': {
       id: '/_app/tasks/$id'
-      path: '/tasks/$id'
+      path: '/$id'
       fullPath: '/tasks/$id'
       preLoaderRoute: typeof AppTasksIdRouteImport
-      parentRoute: typeof AppRoute
+      parentRoute: typeof AppTasksRoute
     }
   }
 }
 
-interface AppRouteChildren {
-  AppSettingsRoute: typeof AppSettingsRoute
-  AppSystemRoute: typeof AppSystemRoute
-  AppIndexRoute: typeof AppIndexRoute
+interface AppChangesRouteChildren {
   AppChangesIdRoute: typeof AppChangesIdRoute
-  AppJobsIdRoute: typeof AppJobsIdRoute
-  AppRunsIdRoute: typeof AppRunsIdRoute
-  AppTasksIdRoute: typeof AppTasksIdRoute
   AppChangesIndexRoute: typeof AppChangesIndexRoute
+}
+
+const AppChangesRouteChildren: AppChangesRouteChildren = {
+  AppChangesIdRoute: AppChangesIdRoute,
+  AppChangesIndexRoute: AppChangesIndexRoute,
+}
+
+const AppChangesRouteWithChildren = AppChangesRoute._addFileChildren(
+  AppChangesRouteChildren,
+)
+
+interface AppTasksRouteChildren {
+  AppTasksIdRoute: typeof AppTasksIdRoute
   AppTasksIndexRoute: typeof AppTasksIndexRoute
 }
 
+const AppTasksRouteChildren: AppTasksRouteChildren = {
+  AppTasksIdRoute: AppTasksIdRoute,
+  AppTasksIndexRoute: AppTasksIndexRoute,
+}
+
+const AppTasksRouteWithChildren = AppTasksRoute._addFileChildren(
+  AppTasksRouteChildren,
+)
+
+interface AppRouteChildren {
+  AppChangesRoute: typeof AppChangesRouteWithChildren
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppSystemRoute: typeof AppSystemRoute
+  AppTasksRoute: typeof AppTasksRouteWithChildren
+  AppIndexRoute: typeof AppIndexRoute
+  AppJobsIdRoute: typeof AppJobsIdRoute
+  AppRunsIdRoute: typeof AppRunsIdRoute
+}
+
 const AppRouteChildren: AppRouteChildren = {
+  AppChangesRoute: AppChangesRouteWithChildren,
   AppSettingsRoute: AppSettingsRoute,
   AppSystemRoute: AppSystemRoute,
+  AppTasksRoute: AppTasksRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
-  AppChangesIdRoute: AppChangesIdRoute,
   AppJobsIdRoute: AppJobsIdRoute,
   AppRunsIdRoute: AppRunsIdRoute,
-  AppTasksIdRoute: AppTasksIdRoute,
-  AppChangesIndexRoute: AppChangesIndexRoute,
-  AppTasksIndexRoute: AppTasksIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

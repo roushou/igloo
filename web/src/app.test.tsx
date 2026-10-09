@@ -39,7 +39,7 @@ describe("sign-in", () => {
     await screen.findByRole("navigation", { name: "Main" });
     expect(router.state.location.pathname).toBe("/");
     expect(api.tokens.get()).toBe(TOKEN);
-    expect(await screen.findByRole("combobox", { name: "Repository" })).toHaveValue(REPO.id);
+    expect(await screen.findByRole("button", { name: "Repository" })).toHaveTextContent("shop");
   });
 
   it("reports an unreachable server", async () => {
@@ -77,10 +77,14 @@ describe("shell", () => {
     const other = { ...REPO, id: "repo_01j9z3k4m5n6p7q8r9s0t1v2w4", location: "https://x/y" };
     stubServer(TOKEN, [REPO, other]);
     renderApp("/");
-    const select = await screen.findByRole("combobox", { name: "Repository" });
-    await userEvent.selectOptions(select, other.id);
-    expect(select).toHaveValue(other.id);
+    const switcher = await screen.findByRole("button", { name: "Repository" });
+    expect(switcher).toHaveTextContent("shop");
+    await userEvent.click(switcher);
+    await userEvent.click(await screen.findByRole("menuitem", { name: /x\/y/ }));
     expect(localStorage.getItem("igloo.repo")).toBe(other.id);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Repository" })).toHaveTextContent("y"),
+    );
   });
 });
 
@@ -97,7 +101,7 @@ describe("command palette", () => {
     const { router } = renderApp("/");
     await screen.findByRole("navigation", { name: "Main" });
     await userEvent.keyboard("{Meta>}k{/Meta}");
-    await userEvent.paste(id);
+    await userEvent.type(await screen.findByRole("combobox"), id);
     await userEvent.click(await within(await screen.findByRole("dialog")).findByRole("option"));
     await waitFor(() => expect(router.state.location.pathname).toBe(path));
   });
@@ -107,10 +111,14 @@ describe("command palette", () => {
     stubServer(TOKEN);
     renderApp("/tasks");
     await screen.findByRole("navigation", { name: "Main" });
-    await screen.findByRole("combobox", { name: "Repository" });
+    await screen.findByRole("button", { name: "Repository" });
     await userEvent.keyboard("{Control>}k{/Control}");
-    await userEvent.paste(REPO.id);
-    await userEvent.click(await within(await screen.findByRole("dialog")).findByRole("option"));
+    await userEvent.type(await screen.findByRole("combobox"), REPO.id);
+    await userEvent.click(
+      await within(await screen.findByRole("dialog")).findByRole("option", {
+        name: /Open repository/,
+      }),
+    );
     await waitFor(() => expect(localStorage.getItem("igloo.repo")).toBe(REPO.id));
   });
 
@@ -120,7 +128,9 @@ describe("command palette", () => {
     renderApp("/");
     await screen.findByRole("navigation", { name: "Main" });
     await userEvent.keyboard("{Meta>}k{/Meta}");
-    await userEvent.paste("hello");
-    expect(await screen.findByText("Paste a resource id to open it.")).toBeInTheDocument();
+    await userEvent.type(await screen.findByRole("combobox"), "qqqq");
+    expect(
+      await screen.findByText("Nothing matches. Paste an id to open a resource."),
+    ).toBeInTheDocument();
   });
 });

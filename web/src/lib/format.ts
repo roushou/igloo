@@ -34,6 +34,36 @@ export const format = {
     return format.bytes(mib * 1024 * 1024);
   },
 
+  /**
+   * How long before `now` a timestamp was: `just now`, `5m ago`, `3h ago`, `2d ago`, and the date
+   * from 30 days on, with the year when it is not the current one. A timestamp in the future
+   * reads `just now`.
+   */
+  relative(iso: string, now: number): string {
+    const seconds = Math.floor((now - new Date(iso).getTime()) / 1000);
+    if (seconds < 45) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.round(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    const then = new Date(iso);
+    const sameYear = then.getFullYear() === new Date(now).getFullYear();
+    return then.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: sameYear ? undefined : "numeric",
+    });
+  },
+
+  /** `acme/shop` for `https://forge.example.com/acme/shop.git`; other locations pass through. */
+  repoName(location: string): string {
+    const path = location.replace(/\.git$/, "").replace(/\/+$/, "");
+    const parts = path.split(/[/:]/).filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join("/") : path;
+  },
+
   /** A short local date and time for a timestamp. */
   time(iso: string): string {
     return new Date(iso).toLocaleString(undefined, {
@@ -44,8 +74,9 @@ export const format = {
     });
   },
 
-  /** `prefix_abcd…wxyz` for a long id; short ids pass through. */
+  /** `prefix_abcd…wxyz` for a long id and seven characters for a commit; the rest pass through. */
   shortId(id: string): string {
+    if (/^[0-9a-f]{40}$/.test(id)) return id.slice(0, 7);
     const underscore = id.indexOf("_");
     if (id.length <= 14 || underscore === -1) return id;
     return `${id.slice(0, underscore + 1)}${id.slice(underscore + 1, underscore + 5)}…${id.slice(-4)}`;

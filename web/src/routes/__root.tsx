@@ -7,6 +7,7 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { ToastProvider } from "@/components/ui/toast";
 import type { RouterContext } from "@/router";
 import appCss from "../styles.css?url";
 
@@ -15,6 +16,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "color-scheme", content: "light dark" },
       { title: "Igloo" },
     ],
     links: [{ rel: "stylesheet", href: appCss }],
@@ -41,7 +43,9 @@ function Root() {
   const { queryClient } = useRouter().options.context as RouterContext;
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      <ToastProvider>
+        <Outlet />
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

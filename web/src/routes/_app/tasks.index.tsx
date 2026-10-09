@@ -1,4 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { TasksPage } from "@/components/pages/tasks-page";
 
-export const Route = createFileRoute("/_app/tasks/")({ component: TasksPage });
+// The list is the layout's: with no task open there is nothing beside it.
+export const Route = createFileRoute("/_app/tasks/")({ component: () => null });

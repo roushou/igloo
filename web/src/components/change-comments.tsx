@@ -1,11 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { MessageSquare } from "lucide-react";
 import { useState } from "react";
 import { api, type Change, type Comment } from "@/api/client";
 import { CliCommand } from "@/components/action-button";
-import { Empty } from "@/components/page";
+import { EmptyState } from "@/components/empty-state";
+import { RelativeTime } from "@/components/relative-time";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
 import { changeCli } from "@/lib/cli";
-import { format } from "@/lib/format";
 import { queryKeys } from "@/lib/queries";
 
 /** Sends a comment on the change and keeps the result as the change's data. */
@@ -24,19 +27,27 @@ export function useComment(change: Change) {
 /** One comment: who, when, where, and what they said. */
 export function CommentCard({ comment }: { comment: Comment }) {
   return (
-    <article className="rounded-lg border bg-card px-4 py-3 text-sm">
-      <header className="mb-1 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">{comment.author}</span>
-        <time>{format.time(comment.at)}</time>
-        <span>revision {comment.revision}</span>
-        {comment.path ? (
-          <span className="font-mono">
-            {comment.path}
-            {comment.line ? `:${comment.line}` : ""}
-          </span>
-        ) : null}
-      </header>
-      <p className="whitespace-pre-wrap">{comment.body}</p>
+    <article className="flex gap-3 text-base">
+      <span
+        aria-hidden
+        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold uppercase"
+      >
+        {comment.author.charAt(0)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <header className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">{comment.author}</span>
+          <RelativeTime at={comment.at} />
+          <span>revision {comment.revision}</span>
+          {comment.path ? (
+            <span className="font-mono">
+              {comment.path}
+              {comment.line ? `:${comment.line}` : ""}
+            </span>
+          ) : null}
+        </header>
+        <p className="whitespace-pre-wrap">{comment.body}</p>
+      </div>
     </article>
   );
 }
@@ -57,12 +68,14 @@ export function CommentForm({
 }) {
   const [body, setBody] = useState("");
   const comment = useComment(change);
+  const toast = useToast();
   const send = () =>
     comment.mutate(
       { body: body.trim(), revision, ...where },
       {
         onSuccess: () => {
           setBody("");
+          toast.show({ title: "Comment sent" });
           onDone?.();
         },
       },
@@ -76,16 +89,21 @@ export function CommentForm({
         send();
       }}
     >
-      <textarea
+      <Textarea
         aria-label={`${label} text`}
         rows={3}
-        className="rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         placeholder="Write a comment"
         value={body}
         onChange={(event) => setBody(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && body.trim()) {
+            event.preventDefault();
+            send();
+          }
+        }}
       />
       {comment.isError ? (
-        <p role="alert" className="text-sm text-failed">
+        <p role="alert" className="text-base text-failed">
           {comment.error.message}
         </p>
       ) : null}
@@ -110,11 +128,14 @@ export function CommentForm({
 export function CommentsTab({ change, revision }: { change: Change; revision: number }) {
   const comments = change.comments ?? [];
   return (
-    <div className="flex max-w-3xl flex-col gap-4">
+    <div className="flex max-w-3xl flex-col gap-6">
       {comments.length === 0 ? (
-        <Empty>No comments yet.</Empty>
+        <EmptyState icon={MessageSquare} title="No comments yet.">
+          Comments on the change or on a line of the diff appear here, and go to the agent when you
+          request changes.
+        </EmptyState>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-5">
           {comments.map((comment) => (
             <CommentCard
               key={`${comment.at}-${comment.author}-${comment.body}`}

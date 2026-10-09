@@ -1,95 +1,152 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { KeyRound, Trash2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { api, type Repo } from "@/api/client";
-import { ActionButton } from "@/components/action-button";
-import { Await, Empty, Page, Rows, Section } from "@/components/page";
+import { ActionButton, CliMenu } from "@/components/action-button";
+import { EmptyState } from "@/components/empty-state";
+import { Await, Page, Section } from "@/components/page";
 import { WithRepo } from "@/components/repo-page";
 import { ShortId } from "@/components/short-id";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
 import { queries, queryKeys } from "@/lib/queries";
 
 /** Repository: where it lives and the secrets its jobs may name. Values are never shown. */
 export function SettingsPage() {
-  return (
-    <Page title="Repository">
-      <WithRepo>{(repo) => <Settings repo={repo} />}</WithRepo>
-    </Page>
-  );
+  return <WithRepo>{(repo) => <Settings repo={repo} />}</WithRepo>;
 }
 
 function Settings({ repo }: { repo: Repo }) {
   const secrets = useQuery(queries.secrets(repo.id));
   return (
-    <div className="flex flex-col gap-8">
-      <Section title="Forge">
-        <dl className="grid max-w-2xl grid-cols-[10rem_1fr] gap-y-2 rounded-lg border bg-card p-4 text-sm">
-          <dt className="text-muted-foreground">Location</dt>
-          <dd className="font-mono break-all">{repo.location}</dd>
-          <dt className="text-muted-foreground">Default branch</dt>
-          <dd className="font-mono">{repo.default_branch}</dd>
-          <dt className="text-muted-foreground">Token secret</dt>
-          <dd className="font-mono">{repo.token_secret ?? "none"}</dd>
-          <dt className="text-muted-foreground">Repository</dt>
-          <dd>
-            <ShortId id={repo.id} />
-          </dd>
-        </dl>
-      </Section>
-      <Await query={secrets} what="secrets">
-        {(names) => (
-          <Section title="Secrets" count={names.length}>
-            {repo.token_secret && !names.includes(repo.token_secret) ? (
-              <p role="alert" className="text-sm text-errored">
-                The forge token secret {repo.token_secret} is not set.
-              </p>
-            ) : null}
-            {names.length === 0 ? (
-              <Empty>No secret is set.</Empty>
-            ) : (
-              <Rows label="Secrets">
-                {names.map((name) => (
-                  <SecretRow key={name} repo={repo} name={name} />
-                ))}
-              </Rows>
-            )}
-            <SetSecret repo={repo} />
-          </Section>
-        )}
-      </Await>
+    <Page
+      crumbs={[{ label: "Repository" }]}
+      title="Repository"
+      actions={
+        <CliMenu
+          commands={[
+            {
+              label: "Set a secret",
+              command: `printf %s "$VALUE" | igloo secret set ${repo.id} <NAME>`,
+            },
+            { label: "Delete a secret", command: `igloo secret delete ${repo.id} <NAME>` },
+          ]}
+        />
+      }
+    >
+      <div className="flex flex-col gap-8">
+        <Section title="Forge">
+          <dl className="divide-y divide-border border-y text-base">
+            <Row label="Location">
+              <span className="font-mono text-sm break-all">{repo.location}</span>
+            </Row>
+            <Row label="Default branch">
+              <span className="font-mono text-sm">{repo.default_branch}</span>
+            </Row>
+            <Row label="Token secret">
+              <span className="font-mono text-sm">{repo.token_secret ?? "none"}</span>
+            </Row>
+            <Row label="Repository">
+              <ShortId id={repo.id} className="-ml-1" />
+            </Row>
+          </dl>
+        </Section>
+        <Await query={secrets} what="secrets">
+          {(names) => (
+            <Section title="Secrets" count={names.length}>
+              {repo.token_secret && !names.includes(repo.token_secret) ? (
+                <p
+                  role="alert"
+                  className="flex items-center gap-2 rounded-lg border border-errored/30 bg-errored-soft px-4 py-3 text-base text-errored"
+                >
+                  <TriangleAlert className="size-4 shrink-0" />
+                  The forge token secret {repo.token_secret} is not set.
+                </p>
+              ) : null}
+              {names.length === 0 ? (
+                <EmptyState
+                  icon={KeyRound}
+                  title="No secret is set."
+                  command={`printf %s "$VALUE" | igloo secret set ${repo.id} GITHUB_TOKEN`}
+                >
+                  Secrets are values a job may name, such as a forge token. They are sent once and
+                  never shown again.
+                </EmptyState>
+              ) : (
+                <ul aria-label="Secrets" className="divide-y divide-border border-y">
+                  {names.map((name) => (
+                    <SecretRow key={name} repo={repo} name={name} />
+                  ))}
+                </ul>
+              )}
+              <SetSecret repo={repo} />
+            </Section>
+          )}
+        </Await>
+      </div>
+    </Page>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-x-4 px-4 py-2.5 @2xl:grid-cols-[12rem_minmax(0,1fr)]">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
     </div>
   );
 }
 
 function SecretRow({ repo, name }: { repo: Repo; name: string }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const remove = useMutation({
     mutationFn: () => api.deleteSecret(repo.id, name),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.secrets(repo.id) }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.secrets(repo.id) });
+      toast.show({ title: "Secret deleted", description: name });
+    },
   });
   const [confirming, setConfirming] = useState(false);
   return (
-    <li className="flex items-center gap-3 px-4 py-2.5">
-      <span className="font-mono text-sm">{name}</span>
+    <li className="flex items-center gap-3 px-4 py-2">
+      <KeyRound className="size-4 shrink-0 text-muted-foreground" />
+      <span className="font-mono text-base">{name}</span>
       {name === repo.token_secret ? (
-        <span className="text-xs text-muted-foreground">forge token</span>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-sm text-muted-foreground">
+          forge token
+        </span>
       ) : null}
       {remove.isError ? (
-        <span role="alert" className="text-xs text-failed">
+        <span role="alert" className="text-sm text-failed">
           {remove.error.message}
         </span>
       ) : null}
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-1">
         {confirming ? (
-          <ActionButton
-            label={`Confirm delete ${name}`}
-            cli={`igloo secret delete ${repo.id} ${name}`}
-            pending={remove.isPending}
-            onRun={() => remove.mutate()}
-          />
+          <>
+            <ActionButton
+              label="Cancel"
+              variant="ghost"
+              size="sm"
+              onRun={() => setConfirming(false)}
+            />
+            <ActionButton
+              label={`Confirm delete ${name}`}
+              text="Delete it"
+              variant="danger"
+              size="sm"
+              pending={remove.isPending}
+              onRun={() => remove.mutate()}
+            />
+          </>
         ) : (
           <ActionButton
             label={`Delete ${name}`}
-            cli={`igloo secret delete ${repo.id} ${name}`}
+            text="Delete"
+            icon={<Trash2 />}
+            variant="ghost"
+            size="sm"
             onRun={() => setConfirming(true)}
           />
         )}
@@ -104,9 +161,11 @@ function SetSecret({ repo }: { repo: Repo }) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const queryClient = useQueryClient();
+  const toast = useToast();
   const set = useMutation({
     mutationFn: () => api.setSecret(repo.id, name.trim(), value),
     onSuccess: async () => {
+      toast.show({ title: "Secret set", description: name.trim() });
       setName("");
       setValue("");
       await queryClient.invalidateQueries({ queryKey: queryKeys.secrets(repo.id) });
@@ -123,16 +182,18 @@ function SetSecret({ repo }: { repo: Repo }) {
   return (
     <form
       aria-label="Set a secret"
-      className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-card p-4"
+      className="mt-4 flex max-w-2xl flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
         if (!unmet) set.mutate();
       }}
     >
-      <p className="text-sm font-medium">Set a secret</p>
+      <p className="text-base font-medium">Set a secret</p>
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1 text-sm">
-          <label htmlFor="secret-name">Name</label>
+        <div className="flex flex-col gap-1.5 text-base">
+          <label htmlFor="secret-name" className="text-muted-foreground">
+            Name
+          </label>
           <Input
             id="secret-name"
             autoComplete="off"
@@ -143,8 +204,10 @@ function SetSecret({ repo }: { repo: Repo }) {
             onChange={(event) => setName(event.target.value)}
           />
         </div>
-        <div className="flex flex-col gap-1 text-sm">
-          <label htmlFor="secret-value">Value</label>
+        <div className="flex flex-col gap-1.5 text-base">
+          <label htmlFor="secret-value" className="text-muted-foreground">
+            Value
+          </label>
           <Input
             id="secret-value"
             type="password"
@@ -156,12 +219,12 @@ function SetSecret({ repo }: { repo: Repo }) {
           />
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         The value is sent once and is never shown or returned again. Setting an existing name
         replaces its value.
       </p>
       {set.isError ? (
-        <p role="alert" className="text-sm text-failed">
+        <p role="alert" className="text-base text-failed">
           {set.error.message}
         </p>
       ) : null}
@@ -170,7 +233,6 @@ function SetSecret({ repo }: { repo: Repo }) {
           label="Set secret"
           type="submit"
           variant="default"
-          cli={`printf %s "$VALUE" | igloo secret set ${repo.id} ${trimmed || "<NAME>"}`}
           unmet={unmet}
           pending={set.isPending}
           onRun={() => {}}

@@ -1,6 +1,6 @@
+import { ArrowDownToLine, ChevronDown, ChevronUp, Search, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "@/api/client";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { type ListHandle, VirtualList } from "@/components/virtual-list";
 import { firstErrorLine, JobLog, type LogLine } from "@/lib/job-log";
@@ -100,42 +100,67 @@ export function LogView({
   };
 
   return (
-    <div className={cn("flex min-h-0 flex-col overflow-hidden rounded-lg border", className)}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-code-line bg-code px-3 py-2 text-code-foreground">
-        <Input
-          aria-label="Search the log"
-          placeholder="Search"
-          className="h-8 w-48 border-code-line bg-transparent text-code-foreground"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setCursor(-1);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") step(event.shiftKey ? -1 : 1);
-          }}
-        />
-        <span aria-live="polite" className="tabular text-xs text-code-muted">
+    <div
+      className={cn(
+        "relative flex min-h-0 flex-col overflow-hidden rounded-lg bg-code text-code-foreground ring-1 ring-code-line",
+        className,
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-code-line bg-code-raised px-2 py-1.5">
+        <div className="relative">
+          <Search className="pointer-events-none absolute top-1.5 left-2 size-3.5 text-code-muted" />
+          <Input
+            aria-label="Search the log"
+            placeholder="Search"
+            className="h-7 w-40 border-code-line bg-code pl-7 text-sm text-code-foreground placeholder:text-code-muted sm:w-52"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setCursor(-1);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") step(event.shiftKey ? -1 : 1);
+            }}
+          />
+        </div>
+        <span aria-live="polite" className="tabular min-w-14 text-sm text-code-muted">
           {query.trim() ? `${matches.length} match${matches.length === 1 ? "" : "es"}` : null}
         </span>
-        <Button variant="ghost" size="sm" disabled={matches.length === 0} onClick={() => step(-1)}>
-          Previous
-        </Button>
-        <Button variant="ghost" size="sm" disabled={matches.length === 0} onClick={() => step(1)}>
-          Next
-        </Button>
-        <Button variant="ghost" size="sm" disabled={first < 0} onClick={() => goTo(first)}>
+        <LogButton label="Previous" disabled={matches.length === 0} onClick={() => step(-1)}>
+          <ChevronUp />
+        </LogButton>
+        <LogButton label="Next" disabled={matches.length === 0} onClick={() => step(1)}>
+          <ChevronDown />
+        </LogButton>
+        <button
+          type="button"
+          disabled={first < 0}
+          onClick={() => goTo(first)}
+          className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm text-code-muted hover:bg-code-line hover:text-code-foreground disabled:opacity-40"
+        >
+          <TriangleAlert className="size-3.5" />
           Jump to first error
-        </Button>
-        <label className="ml-auto flex items-center gap-1.5 text-xs">
+        </button>
+        <label className="ml-auto flex items-center gap-1.5 text-sm text-code-muted">
           <input
             type="checkbox"
+            className="size-3.5 accent-[var(--code-foreground)]"
             checked={follow}
             onChange={(event) => setFollow(event.target.checked)}
           />
           Follow
         </label>
-        <span role="status" className="text-xs text-code-muted">
+        <span role="status" className="flex items-center gap-1.5 text-sm text-code-muted">
+          <span
+            aria-hidden
+            className={cn(
+              "size-1.5 rounded-full",
+              log.state === "streaming" && "animate-pulse-dot bg-running",
+              log.state === "ended" && "bg-passed",
+              log.state === "failed" && "animate-pulse-dot bg-errored",
+              log.state === "loading" && "bg-code-muted",
+            )}
+          />
           {STATE_TEXT[log.state]}
         </span>
       </div>
@@ -158,11 +183,46 @@ export function LogView({
         )}
       />
       {log.lines.length === 0 ? (
-        <p className="bg-code px-3 pb-3 text-sm text-code-muted">
+        <p className="flex items-center gap-2 bg-code px-4 pb-4 text-base text-code-muted">
           {log.state === "ended" ? "The job printed nothing." : "Waiting for output…"}
         </p>
       ) : null}
+      {!follow && log.state === "streaming" ? (
+        <button
+          type="button"
+          className="absolute right-4 bottom-4 flex items-center gap-1.5 rounded-full bg-code-foreground px-3 py-1.5 text-sm font-medium text-code shadow-float"
+          onClick={() => setFollow(true)}
+        >
+          <ArrowDownToLine className="size-3.5" />
+          Jump to latest
+        </button>
+      ) : null}
     </div>
+  );
+}
+
+function LogButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex size-7 items-center justify-center rounded-md text-code-muted hover:bg-code-line hover:text-code-foreground disabled:opacity-40 [&_svg]:size-4"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -181,12 +241,15 @@ function LogRow({
     <div
       data-highlighted={highlighted || undefined}
       className={cn(
-        "flex h-5 gap-3 px-3 font-mono text-[13px] leading-5 whitespace-pre",
-        line.stream === "stderr" && "text-[#ff9aa2]",
-        highlighted && "bg-[#2a3a48]",
+        "flex h-5 gap-4 pr-4 font-mono text-sm leading-5 whitespace-pre",
+        line.stream === "stderr" && "text-code-error",
+        highlighted && "bg-code-line",
       )}
     >
-      <span aria-hidden className="tabular w-10 shrink-0 text-right text-code-muted select-none">
+      <span
+        aria-hidden
+        className="numeric w-12 shrink-0 pr-1 text-right text-code-muted/70 select-none"
+      >
         {number}
       </span>
       <span>{needle ? <Marked text={line.text} needle={needle} /> : line.text}</span>
@@ -202,7 +265,7 @@ function Marked({ text, needle }: { text: string; needle: string }) {
   for (let at = lower.indexOf(target); at !== -1; at = lower.indexOf(target, from)) {
     if (at > from) parts.push(text.slice(from, at));
     parts.push(
-      <mark key={at} className="rounded-sm bg-[#e0b13a] text-black">
+      <mark key={at} className="rounded-sm bg-code-mark text-black">
         {text.slice(at, at + needle.length)}
       </mark>,
     );

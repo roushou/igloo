@@ -1,7 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/jetbrains-mono";
 
-@custom-variant dark (&:is(.dark *));
+/* The theme follows the system: the dark values below replace the light ones. */
 
 /* The console's palette: cool snow greys, one orange for what waits on the user, six statuses. */
 :root {
@@ -16,7 +19,9 @@
   --accent: #eaeff3;
   --accent-foreground: #0f1b25;
   --destructive: #c62f3a;
-  --ring: #5a6a77;
+  --ring: #0f1b25;
+  --overlay: rgb(15 27 37 / 0.4);
+  --float-shadow: 0 12px 32px -8px rgb(15 27 37 / 0.2), 0 2px 6px rgb(15 27 37 / 0.06);
 
   --expedition: #d9530b;
   --expedition-soft: #fdeadf;
@@ -37,6 +42,13 @@
   --code-foreground: #d5dee6;
   --code-muted: #7f90a0;
   --code-line: #1f2d38;
+  --code-raised: #121c25;
+  --code-added: #12301f;
+  --code-added-foreground: #9be3b6;
+  --code-removed: #3a1a20;
+  --code-removed-foreground: #ffb3ba;
+  --code-error: #ff9aa2;
+  --code-mark: #e0b13a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -52,7 +64,9 @@
     --accent: #1a2631;
     --accent-foreground: #e2e9ef;
     --destructive: #ff7b86;
-    --ring: #8b9ba8;
+    --ring: #e2e9ef;
+    --overlay: rgb(2 6 10 / 0.6);
+    --float-shadow: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.4);
 
     --expedition: #ff7b33;
     --expedition-soft: #3a1f10;
@@ -68,6 +82,10 @@
     --errored-soft: #33260d;
     --closed: #8b9ba8;
     --closed-soft: #1a252e;
+
+    --code: #070c11;
+    --code-raised: #0d151c;
+    --code-line: #1a2631;
   }
 }
 
@@ -84,6 +102,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
 
   --color-expedition: var(--expedition);
   --color-expedition-soft: var(--expedition-soft);
@@ -103,21 +122,53 @@
   --color-code-foreground: var(--code-foreground);
   --color-code-muted: var(--code-muted);
   --color-code-line: var(--code-line);
+  --color-code-raised: var(--code-raised);
+  --color-code-added: var(--code-added);
+  --color-code-added-foreground: var(--code-added-foreground);
+  --color-code-removed: var(--code-removed);
+  --color-code-removed-foreground: var(--code-removed-foreground);
+  --color-code-error: var(--code-error);
+  --color-code-mark: var(--code-mark);
 
-  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Bricolage Grotesque", "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display:
+    "Bricolage Grotesque Variable", "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Six sizes, and no others. */
+  --text-*: initial;
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.75rem;
+  --text-sm--line-height: 1rem;
+  --text-base: 0.8125rem;
+  --text-base--line-height: 1.25rem;
+  --text-lg: 0.9375rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+
+  /* One level of elevation, for what floats above the page. */
+  --shadow-*: initial;
+  --shadow-float: var(--float-shadow);
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   html {
     color-scheme: light dark;
+    @apply bg-background;
   }
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply bg-background font-sans text-base text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
   }
   h1,
   h2 {
@@ -128,9 +179,90 @@
   pre {
     @apply font-mono;
   }
+  button,
+  [role="button"],
+  summary,
+  select,
+  label[for] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  /* Every interactive element shows where the keyboard is. */
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--running) 28%, transparent);
+  }
+  /* Quiet scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+  }
 }
 
 @utility tabular {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* The caption above a block: small, spaced, muted. */
+@utility caption {
+  @apply text-sm font-medium tracking-wide text-muted-foreground uppercase;
+}
+
+/* A line number gutter and similar fixed-width numbers. */
+@utility numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes igloo-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes igloo-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@utility animate-pulse-dot {
+  animation: igloo-pulse 1.6s ease-in-out infinite;
+}
+
+@utility skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    color-mix(in oklab, var(--muted-foreground) 16%, var(--accent)) 50%,
+    var(--accent) 100%
+  );
+  background-size: 200% 100%;
+  animation: igloo-shimmer 1.4s linear infinite;
+}
+
+/* Motion is short and purposeful, and none of it runs when the user asks for less. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: the override must beat every utility class. */
+    animation-duration: 0.001ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: as above. */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: as above. */
+    transition-duration: 0.001ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: as above. */
+    scroll-behavior: auto !important;
+  }
 }

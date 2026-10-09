@@ -158,7 +158,7 @@ describe("Repository", () => {
   it("sets a secret through a masked input and never shows its value", async () => {
     signIn();
     const { calls } = serveSecrets(["OLD_TOKEN"]);
-    const { container } = renderApp("/settings");
+    renderApp("/settings");
     await screen.findByText("OLD_TOKEN");
     const form = screen.getByRole("form", { name: "Set a secret" });
     const value = within(form).getByLabelText("Value");
@@ -188,7 +188,7 @@ describe("Repository", () => {
     expect(await within(list).findByText("NEW_TOKEN")).toBeInTheDocument();
     expect(within(form).getByLabelText("Value")).toHaveValue("");
     expect(within(form).getByLabelText("Name")).toHaveValue("");
-    expect(container.ownerDocument.body.innerHTML).not.toContain("hunter2-secret");
+    expect(document.body.innerHTML).not.toContain("hunter2-secret");
     expect(screen.queryByDisplayValue("hunter2-secret")).not.toBeInTheDocument();
   });
 
@@ -197,10 +197,11 @@ describe("Repository", () => {
     serveSecrets([]);
     renderApp("/settings");
     await screen.findByText("No secret is set.");
-    await userEvent.type(screen.getByLabelText("Name"), "NEW_TOKEN");
-    await userEvent.click(screen.getByRole("button", { name: "CLI command for Set secret" }));
+    await userEvent.click(screen.getByRole("button", { name: "Terminal commands" }));
+    const popover = await screen.findByRole("dialog");
+    expect(within(popover).getByText("Set a secret")).toBeInTheDocument();
     expect(
-      await screen.findByText(`printf %s "$VALUE" | igloo secret set ${REPO.id} NEW_TOKEN`),
+      within(popover).getByText(`printf %s "$VALUE" | igloo secret set ${REPO.id} <NAME>`),
     ).toBeInTheDocument();
   });
 
@@ -211,11 +212,12 @@ describe("Repository", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Delete OLD_TOKEN" }));
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: "Confirm delete OLD_TOKEN" }));
-    await waitFor(() => expect(screen.queryByText("OLD_TOKEN")).not.toBeInTheDocument());
+    expect(await screen.findByText("No secret is set.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Secrets" })).not.toBeInTheDocument();
     expect(calls.find((c) => c.method === "DELETE")?.path).toBe(
       `/v1/repos/${REPO.id}/secrets/OLD_TOKEN`,
     );
-    expect(await screen.findByText("No secret is set.")).toBeInTheDocument();
+    expect(await screen.findByText("Secret deleted")).toBeInTheDocument();
   });
 
   it("says when a secret cannot be set", async () => {

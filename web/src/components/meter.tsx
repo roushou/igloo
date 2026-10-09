@@ -15,7 +15,7 @@ export function Meter({
 }) {
   const ratio = max > 0 ? Math.min(1, value / max) : 0;
   return (
-    <div className="flex flex-col gap-1 text-xs">
+    <div className="flex flex-col gap-1.5 text-sm">
       <div className="flex justify-between gap-2">
         <span className="text-muted-foreground">{label}</span>
         <span className="tabular">{text}</span>
@@ -28,9 +28,12 @@ export function Meter({
         value={value}
         aria-valuetext={text}
       />
-      <div aria-hidden className="h-1.5 overflow-hidden rounded-full bg-muted">
+      <div aria-hidden className="h-1 overflow-hidden rounded-full bg-muted">
         <div
-          className={cn("h-full rounded-full", ratio >= 0.9 ? "bg-errored" : "bg-running")}
+          className={cn(
+            "h-full rounded-full transition-[width] duration-500",
+            ratio >= 0.9 ? "bg-errored" : "bg-foreground/70",
+          )}
           style={{ width: `${ratio * 100}%` }}
         />
       </div>

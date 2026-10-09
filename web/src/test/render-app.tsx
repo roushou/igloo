@@ -117,5 +117,7 @@ export function renderApp(path: string) {
     queryClient.clear();
     void router.navigate({ to: "/signin" });
   });
-  return { router, ...render(<RouterProvider router={router} />) };
+  // Like the browser, mount on the document: the root route renders <html> and <body>, and
+  // portals (dialogs, menus) into <body> must not sit beside a root container nested in it.
+  return { router, ...render(<RouterProvider router={router} />, { container: document }) };
 }

@@ -1,5 +1,6 @@
 import type { ConnectionState } from "@/lib/event-stream";
 import { useConnectionState } from "@/lib/events";
+import { cn } from "@/lib/utils";
 
 const LABELS: Record<ConnectionState, string> = {
   live: "Live",
@@ -8,18 +9,22 @@ const LABELS: Record<ConnectionState, string> = {
 };
 
 const DOTS: Record<ConnectionState, string> = {
-  live: "bg-green-500",
-  reconnecting: "bg-amber-500",
-  offline: "bg-red-500",
+  live: "bg-passed",
+  reconnecting: "bg-errored animate-pulse-dot",
+  offline: "bg-failed",
 };
 
-/** Whether live updates are arriving. */
-export function ConnectionStatus() {
+/** Whether live updates are arriving; `compact` shows the dot alone. */
+export function ConnectionStatus({ compact }: { compact?: boolean }) {
   const state = useConnectionState();
   return (
-    <p role="status" className="mt-auto flex items-center gap-2 px-2 text-xs text-muted-foreground">
-      <span aria-hidden className={`size-2 rounded-full ${DOTS[state]}`} />
-      {LABELS[state]}
+    <p
+      role="status"
+      title={LABELS[state]}
+      className="flex items-center gap-2 px-2 text-sm text-muted-foreground"
+    >
+      <span aria-hidden className={cn("size-2 shrink-0 rounded-full", DOTS[state])} />
+      <span className={cn(compact && "sr-only")}>{LABELS[state]}</span>
     </p>
   );
 }

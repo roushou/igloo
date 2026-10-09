@@ -57,7 +57,7 @@ describe("Changes", () => {
       "Closed",
     ]);
     expect(screen.getByText("Checks passed: ready to merge")).toBeInTheDocument();
-    expect(screen.getAllByText("igloo/task-2 → main")).toHaveLength(1);
+    expect(screen.getAllByText(/igloo\/task-2/)).toHaveLength(1);
   });
 
   it("says when there are no changes", async () => {
@@ -67,6 +67,18 @@ describe("Changes", () => {
     expect(await screen.findByText(/No change yet/)).toBeInTheDocument();
   });
 });
+
+/** Opens the "More actions" menu and returns the item called `name`. */
+async function menuItem(name: string) {
+  await userEvent.click(await screen.findByRole("button", { name: "More actions" }));
+  return screen.findByRole("menuitem", { name: new RegExp(name) });
+}
+
+/** Confirms the dialog a merge or a close asks for. */
+async function confirmWith(name: string) {
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name }));
+}
 
 function serveChange(n: number, body = change(n), extra: Record<string, unknown> = {}) {
   return stubServer(TOKEN, [REPO], {
@@ -91,6 +103,7 @@ describe("Change: merge checklist and actions", () => {
     const merge = screen.getByRole("button", { name: "Merge" });
     expect(merge).toBeEnabled();
     await userEvent.click(merge);
+    await confirmWith("Merge");
     await waitFor(() => expect(calls.some((c) => c.path.endsWith("/merge"))).toBe(true));
     expect(await screen.findByText("Merged as")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
@@ -139,6 +152,7 @@ describe("Change: merge checklist and actions", () => {
     });
     renderApp(`/changes/${id("chg", 1)}`);
     await userEvent.click(await screen.findByRole("button", { name: "Merge" }));
+    await confirmWith("Merge");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "main moved since the last revision",
     );
@@ -170,15 +184,16 @@ describe("Change: merge checklist and actions", () => {
     });
     renderApp(`/changes/${id("chg", 1)}`);
     await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    await userEvent.click(screen.getByRole("button", { name: "Request changes" }));
-    await userEvent.click(screen.getByRole("button", { name: "Record revision" }));
+    await userEvent.click(await menuItem("Request changes"));
+    await userEvent.click(await menuItem("Record revision"));
     await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(3));
     expect(calls.find((c) => c.path.endsWith("/approve"))?.body).toEqual({ revision: 2 });
 
-    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await userEvent.click(await menuItem("Close"));
+    await confirmWith("Close change");
     expect(await screen.findByText("Closed", { selector: "[data-state]" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Request changes" })).toBeDisabled();
+    expect(await menuItem("Request changes")).toHaveAttribute("aria-disabled", "true");
   });
 
   it("disables Approve once the latest revision is approved", async () => {
@@ -206,8 +221,10 @@ describe("Change: merge checklist and actions", () => {
     signIn();
     serveChange(1);
     renderApp(`/changes/${id("chg", 1)}`);
-    await userEvent.click(await screen.findByRole("button", { name: `CLI command for ${label}` }));
-    expect(await screen.findByText(command)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Terminal commands" }));
+    const popover = await screen.findByRole("dialog");
+    expect(within(popover).getByText(label)).toBeInTheDocument();
+    expect(within(popover).getByText(command)).toBeInTheDocument();
   });
 });
 

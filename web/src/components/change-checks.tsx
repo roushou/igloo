@@ -1,9 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { ArrowUpRight, ListChecks } from "lucide-react";
 import { useState } from "react";
 import type { Check, Run } from "@/api/client";
+import { ChecksStrip } from "@/components/checks-strip";
+import { CheckTime } from "@/components/elapsed";
+import { EmptyState } from "@/components/empty-state";
 import { LogView } from "@/components/log-view";
-import { Await, Empty } from "@/components/page";
+import { Await } from "@/components/page";
+import { RelativeTime } from "@/components/relative-time";
 import { StatusPill } from "@/components/status-pill";
 import { queries } from "@/lib/queries";
 import { status } from "@/lib/status";
@@ -35,13 +40,15 @@ function firstToOpen(checks: readonly Check[]): Check | null {
 export function ChecksTab({ changeId, revision }: { changeId: string; revision: number }) {
   const runs = useQuery(queries.changeRuns(changeId));
   return (
-    <Await query={runs} what="the checks">
+    <Await query={runs} what="the checks" rows={3}>
       {(runs) => {
         const run = latestRun(runs, revision);
         return run ? (
           <RunChecks run={run} />
         ) : (
-          <Empty>No checks have run for revision {revision}.</Empty>
+          <EmptyState icon={ListChecks} title={`No checks have run for revision ${revision}.`}>
+            Checks start when a revision is recorded; their results and logs appear here.
+          </EmptyState>
         );
       }}
     </Await>
@@ -55,27 +62,37 @@ function RunChecks({ run }: { run: Run }) {
     firstToOpen(run.checks);
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3 text-base">
         <StatusPill state={status.run(run)} />
+        <ChecksStrip checks={run.checks} />
+        <span className="text-muted-foreground">
+          started <RelativeTime at={run.started_at} />
+        </span>
         {run.error ? <span className="text-errored">{run.error}</span> : null}
-        <Link to="/runs/$id" params={{ id: run.id }} className="text-xs hover:underline">
+        <Link
+          to="/runs/$id"
+          params={{ id: run.id }}
+          className="ml-auto inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
           Open the run
+          <ArrowUpRight className="size-3.5" />
         </Link>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
-        <ul aria-label="Checks" className="flex flex-col gap-1">
+      <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        <ul aria-label="Checks" className="flex flex-col gap-0.5">
           {run.checks.map((check) => (
             <li key={check.name}>
               <button
                 type="button"
                 aria-pressed={check.name === selected?.name}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm hover:bg-accent",
-                  check.name === selected?.name && "bg-muted font-medium",
+                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-base hover:bg-accent/60",
+                  check.name === selected?.name && "bg-accent font-medium",
                 )}
                 onClick={() => setPicked({ run: run.id, name: check.name })}
               >
                 <span className="min-w-0 flex-1 truncate">{check.name}</span>
+                <CheckTime check={check} />
                 <StatusPill state={status.check(check)} />
               </button>
             </li>
@@ -92,14 +109,14 @@ function RunChecks({ run }: { run: Run }) {
 function CheckLog({ check }: { check: Check }) {
   if (!check.job) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="rounded-lg border border-dashed px-4 py-8 text-center text-base text-muted-foreground">
         {check.reason ?? "This check has not started."}
       </p>
     );
   }
   return (
     <div className="flex flex-col gap-2">
-      {check.reason ? <p className="text-sm text-errored">{check.reason}</p> : null}
+      {check.reason ? <p className="text-base text-errored">{check.reason}</p> : null}
       <LogView jobId={check.job} openAtError={check.status === "failed"} className="h-[28rem]" />
     </div>
   );

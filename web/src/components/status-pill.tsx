@@ -1,3 +1,5 @@
+import { motion } from "motion/react";
+import { useMotion } from "@/lib/motion";
 import { STATE_LABELS, type State } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
@@ -10,7 +12,10 @@ const STYLES: Record<State, string> = {
   closed: "bg-closed-soft text-closed",
 };
 
-/** The one pill every page uses for a state; `label` replaces the state's name when given. */
+/**
+ * The one pill every page uses for a state; `label` replaces the state's name when given. A
+ * running pill's dot breathes; a pill that changes state pops into its new colour.
+ */
 export function StatusPill({
   state,
   label,
@@ -20,17 +25,43 @@ export function StatusPill({
   label?: string;
   className?: string;
 }) {
+  const { transition } = useMotion();
   return (
-    <span
+    <motion.span
+      key={state}
       data-state={state}
+      initial={{ scale: 0.92, opacity: 0.4 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={transition(0.2)}
       className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+        "inline-flex h-5 shrink-0 items-center gap-1.5 rounded-full px-2 text-sm font-medium whitespace-nowrap",
         STYLES[state],
         className,
       )}
     >
-      <span aria-hidden className="size-1.5 rounded-full bg-current" />
+      <span
+        aria-hidden
+        className={cn(
+          "size-1.5 rounded-full bg-current",
+          state === "running" && "animate-pulse-dot",
+        )}
+      />
       {label ?? STATE_LABELS[state]}
-    </span>
+    </motion.span>
+  );
+}
+
+/** A bare dot in a state's colour, for places too small for a pill. */
+export function StateDot({ state, className }: { state: State; className?: string }) {
+  const color: Record<State, string> = {
+    "needs-you": "bg-expedition",
+    running: "bg-running",
+    passed: "bg-passed",
+    failed: "bg-failed",
+    errored: "bg-errored",
+    closed: "bg-closed",
+  };
+  return (
+    <span aria-hidden className={cn("size-2 shrink-0 rounded-full", color[state], className)} />
   );
 }

@@ -1,4 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ChangesPage } from "@/components/pages/changes-page";
 
-export const Route = createFileRoute("/_app/changes/")({ component: ChangesPage });
+// The list is the layout's: with no change open there is nothing beside it.
+export const Route = createFileRoute("/_app/changes/")({ component: () => null });

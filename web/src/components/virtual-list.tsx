@@ -41,6 +41,7 @@ export function VirtualList<T>({
   ref,
 }: Props<T>) {
   const scroller = useRef<HTMLDivElement>(null);
+  const lastTop = useRef(0);
   const windowed = items.length > WINDOW_FROM;
   const virtualizer = useVirtualizer({
     count: windowed ? items.length : 0,
@@ -82,6 +83,15 @@ export function VirtualList<T>({
       className={cn("overflow-auto", className)}
       onWheel={(event) => {
         if (follow && event.deltaY < 0) onLeaveEnd?.();
+      }}
+      // Dragging the scrollbar, touch and the keyboard move the view too: scrolling up and away
+      // from the end ends following, whatever did it.
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        const movedUp = element.scrollTop < lastTop.current - 2;
+        lastTop.current = element.scrollTop;
+        const fromEnd = element.scrollHeight - element.clientHeight - element.scrollTop;
+        if (follow && movedUp && fromEnd > 48) onLeaveEnd?.();
       }}
     >
       {windowed ? (

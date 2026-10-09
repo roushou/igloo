@@ -43,7 +43,7 @@ describe("Tasks", () => {
     signIn();
     stubServer(TOKEN, [REPO], { [tasksPath]: [] });
     renderApp("/tasks");
-    expect(await screen.findByText(/No task yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/No tasks yet/)).toBeInTheDocument();
   });
 
   it("creates a task and opens it", async () => {
@@ -191,7 +191,7 @@ describe("Task", () => {
     });
     renderApp(`/tasks/${id("task", 2)}`);
     expect(await screen.findByRole("alert")).toHaveTextContent("the tool exited 1");
-    expect(await screen.findByRole("link", { name: "The fix" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: /The fix/ })).toHaveAttribute(
       "href",
       `/changes/${id("chg", 2)}`,
     );
@@ -211,9 +211,7 @@ describe("Task", () => {
       [`POST /v1/tasks/${id("task", 1)}/cancel`]: cancelled,
     });
     renderApp(`/tasks/${id("task", 1)}`);
-    await userEvent.click(
-      await screen.findByRole("button", { name: "CLI command for Cancel task" }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: "Terminal commands" }));
     expect(await screen.findByText(`igloo task cancel ${id("task", 1)}`)).toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
     await userEvent.click(screen.getByRole("button", { name: "Cancel task" }));

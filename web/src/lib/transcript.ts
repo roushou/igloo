@@ -10,6 +10,8 @@ export type ToolRow = {
   name: string;
   input: string;
   result: { output: string; isError: boolean } | null;
+  /** How long the call took; null until the server reports when entries happened. */
+  durationMs: number | null;
 };
 
 /** What the transcript view lists, in order. */
@@ -54,6 +56,7 @@ export function transcriptRows(entries: readonly TranscriptEntry[], turns: reado
           name: item.name,
           input: item.input,
           result: null,
+          durationMs: null,
         };
         calls.set(item.id, row);
         rows.push(row);
@@ -70,6 +73,7 @@ export function transcriptRows(entries: readonly TranscriptEntry[], turns: reado
             name: "result",
             input: "",
             result: { output: item.output, isError: item.is_error },
+            durationMs: null,
           });
         }
         break;

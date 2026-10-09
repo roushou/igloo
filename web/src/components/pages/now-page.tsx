@@ -1,11 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { CheckCheck, Zap } from "lucide-react";
 import type { Change, Run, Task } from "@/api/client";
-import { Elapsed } from "@/components/elapsed";
+import { ChecksStrip } from "@/components/checks-strip";
+import { Timing } from "@/components/elapsed";
+import { EmptyState } from "@/components/empty-state";
 import { ItemRow } from "@/components/item-row";
 import { Await, Empty, Page, Rows, Section } from "@/components/page";
+import { RelativeTime } from "@/components/relative-time";
 import { WithRepo } from "@/components/repo-page";
 import { ShortId } from "@/components/short-id";
+import { NOW_TASK_PHASES } from "@/lib/counts";
 import type { EventNotice } from "@/lib/event-stream";
 import { useRecentActivity } from "@/lib/events";
 import { format } from "@/lib/format";
@@ -17,14 +22,14 @@ import { runStep, taskStep } from "@/lib/steps";
 /** Now: what waits on the user, what runs, and what just happened. */
 export function NowPage() {
   return (
-    <Page title="Now">
+    <Page crumbs={[{ label: "Now" }]} title="Now">
       <WithRepo>{(repo) => <Now repo={repo.id} />}</WithRepo>
     </Page>
   );
 }
 
 function Now({ repo }: { repo: string }) {
-  const tasks = useQuery(queries.tasks(repo, ["awaiting_review", "preparing", "working"]));
+  const tasks = useQuery(queries.tasks(repo, [...NOW_TASK_PHASES]));
   const changes = useQuery(queries.changes(repo, ["open"]));
   const runs = useQuery(queries.runs(repo));
   const activity = useRecentActivity();
@@ -60,7 +65,10 @@ function Waiting({ tasks, changes }: { tasks: Task[]; changes: Change[] }) {
   return (
     <Section title="Needs you" count={count} tone="needs-you">
       {count === 0 ? (
-        <Empty>Nothing is waiting on you.</Empty>
+        <div className="flex items-center gap-2 border-y py-3 text-base text-muted-foreground">
+          <CheckCheck className="size-4 text-passed" />
+          Nothing is waiting on you.
+        </div>
       ) : (
         <Rows label="Needs you">
           {waitingChanges.map((change) => (
@@ -69,12 +77,9 @@ function Waiting({ tasks, changes }: { tasks: Task[]; changes: Change[] }) {
               state="needs-you"
               title={change.title}
               link={{ to: "/changes/$id", params: { id: change.id } }}
-              details={
-                <>
-                  <span>{waitingOn(change)}</span>
-                  <ShortId id={change.id} />
-                </>
-              }
+              details={<span className="text-expedition">{waitingOn(change)}</span>}
+              meta={<ShortId id={change.id} />}
+              time={<RelativeTime at={change.revisions.at(-1)?.created_at ?? ""} />}
             />
           ))}
           {waitingTasks.map((task) => (
@@ -83,12 +88,9 @@ function Waiting({ tasks, changes }: { tasks: Task[]; changes: Change[] }) {
               state="needs-you"
               title={task.goal}
               link={{ to: "/tasks/$id", params: { id: task.id } }}
-              details={
-                <>
-                  <span>The agent finished and awaits your review</span>
-                  <ShortId id={task.id} />
-                </>
-              }
+              details={<span>The agent finished and awaits your review</span>}
+              meta={<ShortId id={task.id} />}
+              time={<RelativeTime at={task.created_at} />}
             />
           ))}
         </Rows>
@@ -113,13 +115,9 @@ function Running({ tasks, runs }: { tasks: Task[]; runs: Run[] }) {
               state="running"
               title={task.goal}
               link={{ to: "/tasks/$id", params: { id: task.id } }}
-              details={
-                <>
-                  <span>{taskStep(task)}</span>
-                  <ShortId id={task.id} />
-                </>
-              }
-              aside={<Elapsed since={task.created_at} />}
+              details={<span>{taskStep(task)}</span>}
+              meta={<ShortId id={task.id} />}
+              time={<Timing startedAt={task.created_at} />}
             />
           ))}
           {runningRuns.map((run) => (
@@ -131,10 +129,11 @@ function Running({ tasks, runs }: { tasks: Task[]; runs: Run[] }) {
               details={
                 <>
                   <span>{runStep(run)}</span>
-                  <ShortId id={run.id} />
+                  <ChecksStrip checks={run.checks} />
                 </>
               }
-              aside={<Elapsed since={run.started_at} />}
+              meta={<ShortId id={run.id} />}
+              time={<Timing startedAt={run.started_at} />}
             />
           ))}
         </Rows>
@@ -150,7 +149,13 @@ function RecentRuns({ runs }: { runs: Run[] }) {
   return (
     <Section title="Recent runs" count={finished.length}>
       {finished.length === 0 ? (
-        <Empty>No run has finished yet.</Empty>
+        <EmptyState
+          icon={Zap}
+          title="No run has finished yet"
+          hint="A run checks a revision of a change; it starts when a task's work or a push opens one."
+        >
+          Finished runs and how they ended are listed here.
+        </EmptyState>
       ) : (
         <Rows label="Recent runs">
           {finished.map((run) => (
@@ -162,10 +167,11 @@ function RecentRuns({ runs }: { runs: Run[] }) {
               details={
                 <>
                   {run.error ? <span className="text-errored">{run.error}</span> : null}
-                  <ShortId id={run.id} />
+                  <ChecksStrip checks={run.checks} />
                 </>
               }
-              aside={format.time(run.started_at)}
+              meta={<ShortId id={run.id} />}
+              time={<RelativeTime at={run.started_at} />}
             />
           ))}
         </Rows>
@@ -182,14 +188,22 @@ function Activity({ notices }: { notices: readonly EventNotice[] }) {
       {notices.length === 0 ? (
         <Empty>Events appear here as they happen.</Empty>
       ) : (
-        <ul aria-label="Recent activity" className="flex flex-col gap-1 text-sm">
+        <ul aria-label="Recent activity" className="flex flex-col border-l">
           {notices.slice(0, ACTIVITY_SHOWN).map((notice) => (
-            <li key={notice.sequence} className="flex items-baseline gap-3">
-              <time className="tabular w-20 shrink-0 text-xs text-muted-foreground">
-                {new Date(notice.time).toLocaleTimeString()}
-              </time>
+            <li
+              key={notice.sequence}
+              className="relative flex items-baseline gap-3 py-1 pl-4 text-base"
+            >
+              <span
+                aria-hidden
+                className="absolute top-3 -left-[3px] size-1.5 rounded-full bg-muted-foreground/50"
+              />
               <span>{notice.kind.replaceAll("_", " ").replaceAll(".", " ")}</span>
               <Subject notice={notice} />
+              <RelativeTime
+                at={notice.time}
+                className="tabular ml-auto text-sm text-muted-foreground"
+              />
             </li>
           ))}
         </ul>
@@ -198,30 +212,33 @@ function Activity({ notices }: { notices: readonly EventNotice[] }) {
   );
 }
 
+const SUBJECT_CLASS =
+  "font-mono text-sm text-muted-foreground hover:text-foreground hover:underline";
+
 function Subject({ notice }: { notice: EventNotice }) {
   const id = notice.resource_id;
   switch (notice.resource_type) {
     case "task":
       return (
-        <Link to="/tasks/$id" params={{ id }} className="font-mono text-xs hover:underline">
+        <Link to="/tasks/$id" params={{ id }} className={SUBJECT_CLASS}>
           {format.shortId(id)}
         </Link>
       );
     case "change":
       return (
-        <Link to="/changes/$id" params={{ id }} className="font-mono text-xs hover:underline">
+        <Link to="/changes/$id" params={{ id }} className={SUBJECT_CLASS}>
           {format.shortId(id)}
         </Link>
       );
     case "run":
       return (
-        <Link to="/runs/$id" params={{ id }} className="font-mono text-xs hover:underline">
+        <Link to="/runs/$id" params={{ id }} className={SUBJECT_CLASS}>
           {format.shortId(id)}
         </Link>
       );
     case "job":
       return (
-        <Link to="/jobs/$id" params={{ id }} className="font-mono text-xs hover:underline">
+        <Link to="/jobs/$id" params={{ id }} className={SUBJECT_CLASS}>
           {format.shortId(id)}
         </Link>
       );
