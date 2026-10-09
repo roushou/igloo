@@ -1,6 +1,6 @@
 # 0011. Igloo owns the agent loop; coding tools plug in
 
-- Status: accepted
+- Status: accepted; amended by 0013 (the forge is a mirror, not the git host)
 - Date: 2026-10-04
 
 ## Context

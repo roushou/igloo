@@ -156,7 +156,7 @@ Order: P3.1 and P3.2 in parallel -> P3.3 -> P3.4 -> P3.5 -> P3.6 -> P3.7.
 ## Decisions
 
 1. **Forge credentials: a fine-grained personal access token** stored as a repository secret. The
-   GitHub App comes with external repositories (phase 7).
+   GitHub App comes with external repositories (phase 8).
 2. **Changes start from branches on the forge**, pushed by the developer, who works on a machine
    with git access to the forge. Agents in sandboxes push through Igloo in phase 4.
 3. **Merges are fast-forward only**. A target branch that moved needs a rebased revision, which

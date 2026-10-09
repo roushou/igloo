@@ -477,8 +477,8 @@ target branch, holding the judged revision's tree, with the commits' trailers an
 
 ## 15. Roadmap
 
-Each phase ends with something usable. Phases 1 to 6 target Igloo's own repository;
-phase 7 opens Igloo to external repositories.
+Each phase ends with something usable. Phases 1 to 7 target Igloo's own repository;
+phase 8 opens Igloo to external repositories.
 
 | Phase                   | Scope                                                                                                                                                             | Exit gate                                                                                                                             |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -487,5 +487,6 @@ phase 7 opens Igloo to external repositories.
 | 3 Changes               | `Repo` with secrets and trust settings, the forge as git host, git checkouts in sandboxes, `Change` with revisions, checks run by Igloo, merge, outcome recording | Igloo checks and merges its own changes; GitHub Actions stays as break-glass                                                          |
 | 4 Agents                | Agent harnesses (Claude Code, Codex, Pi, ...), normalized transcripts, `Task`, MCP server, agent tokens and grants                                                | From an editor's agent, two Igloo tasks run in parallel; both changes are reviewed in Igloo and one is merged                         |
 | 5 Console               | Web console served by the server (ADR 0012), event stream, read models for screens, diffs, worker usage                                                           | Through the tunnel, the user follows and reviews a task and merges its change from the console alone                                  |
-| 6 Autonomy              | Autonomy stages, Firecracker, multi-node, workflows                                                                                                               | Igloo reaches the Maintain stage for one task category                                                                                |
-| 7 External repositories | Onboarding, more forges and toolchains, tenancy decision                                                                                                          | An external repository runs CI and the agent loop on Igloo                                                                            |
+| 6 Workspaces            | Interactive terminals, workspaces sealed and resumed, git hosted by Igloo with the forge as a mirror, `igloo shell`, attaching to agents (ADR 0013)               | The owner works on Igloo from a workspace with no local clone; changes are pushed to and merged in Igloo; the forge mirrors `main`    |
+| 7 Autonomy              | Autonomy stages, Firecracker, multi-node, workflows                                                                                                               | Igloo reaches the Maintain stage for one task category                                                                                |
+| 8 External repositories | Onboarding, more forges and toolchains, tenancy decision                                                                                                          | An external repository runs CI and the agent loop on Igloo                                                                            |
