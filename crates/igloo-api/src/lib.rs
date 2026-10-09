@@ -10,6 +10,7 @@
 pub mod change;
 pub mod event;
 pub mod job;
+pub mod list;
 pub mod problem;
 pub mod repo;
 pub mod run;
@@ -17,3 +18,4 @@ pub mod sandbox;
 pub mod seal;
 pub mod snapshot;
 pub mod task;
+pub mod worker;

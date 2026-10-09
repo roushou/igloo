@@ -151,6 +151,19 @@ impl RunQueries {
         Ok(runs)
     }
 
+    /// The runs of `repo`, oldest first.
+    pub async fn of_repo(&self, repo: RepoId) -> Result<Vec<Run>, StorageError> {
+        let mut runs: Vec<Run> = self
+            .store
+            .all()
+            .await?
+            .into_iter()
+            .filter(|run| run.repo() == repo)
+            .collect();
+        runs.sort_by_key(Entity::id);
+        Ok(runs)
+    }
+
     /// The run waiting on `job` as one of its checks.
     pub async fn with_job(&self, job: JobId) -> Result<Option<Run>, StorageError> {
         Ok(self

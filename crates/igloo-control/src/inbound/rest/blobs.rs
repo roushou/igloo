@@ -22,6 +22,7 @@ use crate::ports::{ImageReference, Platform};
 /// Authenticated by the bearer token or a presigned upload URL.
 #[utoipa::path(
     put,
+    operation_id = "putBlob",
     path = "/v1/blobs/{digest}",
     tag = "snapshots",
     params(
@@ -56,6 +57,7 @@ pub(super) async fn put(
 /// Downloads a blob. Authenticated by the bearer token or a presigned download URL.
 #[utoipa::path(
     get,
+    operation_id = "getBlob",
     path = "/v1/blobs/{digest}",
     tag = "snapshots",
     params(
@@ -92,6 +94,7 @@ pub(super) async fn get(
 /// Registers a snapshot of uploaded layers, over a base snapshot's layers if one is named.
 #[utoipa::path(
     post,
+    operation_id = "createSnapshot",
     path = "/v1/snapshots",
     tag = "snapshots",
     request_body = CreateSnapshotRequest,
@@ -132,6 +135,7 @@ pub(super) async fn create_snapshot(
 /// Pulls a public container image from its registry and registers its layers as a snapshot.
 #[utoipa::path(
     post,
+    operation_id = "importImage",
     path = "/v1/snapshots/import",
     tag = "snapshots",
     request_body = ImportImageRequest,
@@ -194,6 +198,7 @@ impl ApiState {
 /// Gets a snapshot.
 #[utoipa::path(
     get,
+    operation_id = "getSnapshot",
     path = "/v1/snapshots/{id}",
     tag = "snapshots",
     params(("id" = String, Path)),

@@ -20,6 +20,7 @@ use crate::ports::SecretValue;
 /// Registers a repository.
 #[utoipa::path(
     post,
+    operation_id = "registerRepo",
     path = "/v1/repos",
     tag = "repos",
     request_body = RegisterRepoRequest,
@@ -49,6 +50,7 @@ pub(super) async fn register(
 /// Lists repositories, oldest first.
 #[utoipa::path(
     get,
+    operation_id = "listRepos",
     path = "/v1/repos",
     tag = "repos",
     responses((status = 200, body = Vec<RepoResource>))
@@ -69,6 +71,7 @@ pub(crate) async fn list_repos(state: &ApiState) -> Result<Vec<RepoResource>, Ap
 /// Gets a repository.
 #[utoipa::path(
     get,
+    operation_id = "getRepo",
     path = "/v1/repos/{id}",
     tag = "repos",
     params(("id" = String, Path)),
@@ -86,6 +89,7 @@ pub(super) async fn get(
 /// over an optional base snapshot. A branch is fetched from the forge first.
 #[utoipa::path(
     post,
+    operation_id = "snapshotRepo",
     path = "/v1/repos/{id}/snapshots",
     tag = "repos",
     params(("id" = String, Path)),
@@ -143,6 +147,7 @@ pub(super) async fn snapshot(
 /// Lists the names of a repository's secrets; values are never returned.
 #[utoipa::path(
     get,
+    operation_id = "listRepoSecrets",
     path = "/v1/repos/{id}/secrets",
     tag = "repos",
     params(("id" = String, Path)),
@@ -162,6 +167,7 @@ pub(super) async fn list_secrets(
 /// Sets or replaces a secret. The body is its value, as text.
 #[utoipa::path(
     put,
+    operation_id = "setRepoSecret",
     path = "/v1/repos/{id}/secrets/{name}",
     tag = "repos",
     params(("id" = String, Path), ("name" = String, Path, description = "`[A-Z_][A-Z0-9_]*`")),
@@ -193,6 +199,7 @@ pub(super) async fn set_secret(
 /// Deletes a secret.
 #[utoipa::path(
     delete,
+    operation_id = "deleteRepoSecret",
     path = "/v1/repos/{id}/secrets/{name}",
     tag = "repos",
     params(("id" = String, Path), ("name" = String, Path)),

@@ -1,15 +1,21 @@
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use igloo_api::change::{ApproveRequest, ChangeResource, CommentRequest, OpenChangeRequest};
+use igloo_api::change::{
+    ApprovalNeed, ApprovalState, ApproveRequest, ChangePhase, ChangeResource, ChecksState,
+    CommentRequest, MergeReadiness, OpenChangeRequest,
+};
+use igloo_api::list::ListOrder;
+use igloo_api::list::PhaseFilter;
 use igloo_api::problem::Problem;
-use igloo_core::change::ChangeId;
+use igloo_core::change::{Change, ChangeId};
 use igloo_core::repo::RepoId;
 
 use super::auth::Caller;
 use super::{ApiError, ApiState};
 use crate::app::{AppError, RequestContext};
+use crate::ci::{self, Readiness};
 use crate::platform::{
     ApproveChange, CloseChange, CommentChange, OpenChange, RequestChanges, ReviseChange,
 };
@@ -17,6 +23,7 @@ use crate::platform::{
 /// Opens a change proposing a branch pushed to the forge; its head is the first revision.
 #[utoipa::path(
     post,
+    operation_id = "openChange",
     path = "/v1/repos/{id}/changes",
     tag = "changes",
     params(("id" = String, Path)),
@@ -56,29 +63,43 @@ pub(super) async fn open(
     Ok((StatusCode::CREATED, Json(load(&state, change).await?)))
 }
 
-/// Lists a repository's changes, oldest first.
+/// Lists a repository's changes, oldest first unless `order=newest`, optionally only those at
+/// the given phases. Open changes carry their merge readiness.
 #[utoipa::path(
     get,
+    operation_id = "listRepoChanges",
     path = "/v1/repos/{id}/changes",
     tag = "changes",
-    params(("id" = String, Path)),
-    responses((status = 200, body = Vec<ChangeResource>))
+    params(
+        ("id" = String, Path),
+        ("phase" = Option<Vec<ChangePhase>>, Query, description = "Only changes at this phase; repeatable"),
+        ("order" = Option<ListOrder>, Query, description = "`newest` lists the newest first"),
+    ),
+    responses((status = 200, body = Vec<ChangeResource>), (status = 422, body = Problem))
 )]
 pub(super) async fn list(
     State(state): State<ApiState>,
     _: Caller,
     Path(id): Path<String>,
+    Query(params): Query<Vec<(String, String)>>,
 ) -> Result<Json<Vec<ChangeResource>>, ApiError> {
+    let filter = PhaseFilter::<ChangePhase>::try_from(params).map_err(AppError::from)?;
     let repo: RepoId = id
         .parse()
         .map_err(|_| ApiError::not_found("repo.not_found"))?;
     let changes = state.changes.of_repo(repo).await.map_err(AppError::from)?;
-    Ok(Json(changes.iter().map(ChangeResource::from).collect()))
+    let changes = filter.apply(changes, |change| ChangeResource::from(change).phase);
+    let mut resources = Vec::with_capacity(changes.len());
+    for change in &changes {
+        resources.push(resource(&state, change).await?);
+    }
+    Ok(Json(resources))
 }
 
 /// Gets a change.
 #[utoipa::path(
     get,
+    operation_id = "getChange",
     path = "/v1/changes/{id}",
     tag = "changes",
     params(("id" = String, Path)),
@@ -101,6 +122,7 @@ pub(crate) async fn get_change(state: &ApiState, id: &str) -> Result<ChangeResou
 /// nothing.
 #[utoipa::path(
     post,
+    operation_id = "reviseChange",
     path = "/v1/changes/{id}/revisions",
     tag = "changes",
     params(("id" = String, Path)),
@@ -139,6 +161,7 @@ pub(super) async fn revise(
 /// Approves a change's latest revision as the caller, who must be a human.
 #[utoipa::path(
     post,
+    operation_id = "approveChange",
     path = "/v1/changes/{id}/approve",
     tag = "changes",
     params(("id" = String, Path)),
@@ -180,6 +203,7 @@ pub(super) async fn approve(
 /// Comments on a revision of a change, the latest by default, optionally on a line of a file.
 #[utoipa::path(
     post,
+    operation_id = "commentOnChange",
     path = "/v1/changes/{id}/comments",
     tag = "changes",
     params(("id" = String, Path)),
@@ -225,6 +249,7 @@ pub(crate) async fn add_comment(
 /// made by a task sends them to its agent as its next turn.
 #[utoipa::path(
     post,
+    operation_id = "requestChanges",
     path = "/v1/changes/{id}/request-changes",
     tag = "changes",
     params(("id" = String, Path)),
@@ -261,6 +286,7 @@ pub(crate) async fn ask_for_changes(
 /// the revision to the target branch as one squashed commit naming the change.
 #[utoipa::path(
     post,
+    operation_id = "mergeChange",
     path = "/v1/changes/{id}/merge",
     tag = "changes",
     params(("id" = String, Path)),
@@ -289,6 +315,7 @@ pub(super) async fn merge(
 /// Closes a change without merging.
 #[utoipa::path(
     post,
+    operation_id = "closeChange",
     path = "/v1/changes/{id}/close",
     tag = "changes",
     params(("id" = String, Path)),
@@ -320,5 +347,38 @@ async fn load(state: &ApiState, id: ChangeId) -> Result<ChangeResource, ApiError
         .await
         .map_err(AppError::from)?
         .ok_or_else(|| ApiError::not_found("change.not_found"))?;
-    Ok(ChangeResource::from(&change))
+    resource(state, &change).await
+}
+
+/// The change as a resource; an open change carries its merge readiness.
+async fn resource(state: &ApiState, change: &Change) -> Result<ChangeResource, ApiError> {
+    let resource = ChangeResource::from(change);
+    if resource.phase != ChangePhase::Open {
+        return Ok(resource);
+    }
+    let readiness = state.merger.readiness(change).await?;
+    Ok(resource.with_readiness(MergeReadiness::from(&readiness)))
+}
+
+impl From<&Readiness> for MergeReadiness {
+    fn from(readiness: &Readiness) -> Self {
+        let checks = match readiness.checks {
+            ci::ChecksState::Passed => ChecksState::Passed,
+            ci::ChecksState::Failed => ChecksState::Failed,
+            ci::ChecksState::Running => ChecksState::Running,
+            ci::ChecksState::Missing => ChecksState::Missing,
+        };
+        let state = if readiness.protected.is_empty() {
+            ApprovalState::NotRequired
+        } else if readiness.approved {
+            ApprovalState::Given
+        } else {
+            ApprovalState::Required
+        };
+        Self::new(
+            checks,
+            ApprovalNeed::new(state, readiness.protected.clone()),
+            readiness.fast_forward,
+        )
+    }
 }

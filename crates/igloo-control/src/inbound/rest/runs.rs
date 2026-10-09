@@ -1,9 +1,10 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use igloo_api::problem::Problem;
-use igloo_api::run::{CheckResource, CheckStatus, RunPhase as ApiPhase, RunResource};
-use igloo_core::Entity;
+use igloo_api::run::{CheckResource, CheckStatus, RunList, RunPhase as ApiPhase, RunResource};
 use igloo_core::change::ChangeId;
+use igloo_core::repo::RepoId;
+use igloo_core::{Entity, ValidationErrors, Validator};
 
 use super::auth::Caller;
 use super::{ApiError, ApiState};
@@ -13,6 +14,7 @@ use crate::ci::{CheckOutcome, Run, RunId, RunOutcome, RunPhase};
 /// Lists the runs of a change, one per revision, oldest first.
 #[utoipa::path(
     get,
+    operation_id = "listChangeRuns",
     path = "/v1/changes/{id}/runs",
     tag = "changes",
     params(("id" = String, Path)),
@@ -42,9 +44,95 @@ pub(crate) async fn runs_of_change(
     Ok(resources)
 }
 
+/// Lists a repository's runs, newest first, a page at a time.
+#[utoipa::path(
+    get,
+    operation_id = "listRepoRuns",
+    path = "/v1/repos/{id}/runs",
+    tag = "changes",
+    params(
+        ("id" = String, Path),
+        ("cursor" = Option<String>, Query, description = "`next_cursor` of the previous page"),
+        ("limit" = Option<u32>, Query, description = "Page size, 1 to 200; 50 when omitted"),
+    ),
+    responses((status = 200, body = RunList), (status = 404, body = Problem), (status = 422, body = Problem))
+)]
+pub(super) async fn of_repo(
+    State(state): State<ApiState>,
+    _: Caller,
+    Path(id): Path<String>,
+    Query(params): Query<Vec<(String, String)>>,
+) -> Result<Json<RunList>, ApiError> {
+    let page = Page::try_from(params).map_err(AppError::from)?;
+    let repo: RepoId = id
+        .parse()
+        .map_err(|_| ApiError::not_found("repo.not_found"))?;
+    state
+        .repos
+        .get(repo)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| ApiError::not_found("repo.not_found"))?;
+    let runs = state.runs.of_repo(repo).await.map_err(AppError::from)?;
+    let mut rest = runs
+        .iter()
+        .rev()
+        .filter(|run| page.cursor.is_none_or(|cursor| run.id() < cursor));
+    let mut items = Vec::new();
+    for run in rest.by_ref().take(page.limit) {
+        items.push(resource(&state, run).await?);
+    }
+    let next_cursor = rest.next().and(items.last()).map(|last| last.id.clone());
+    Ok(Json(RunList::new(items, next_cursor)))
+}
+
+/// List parameters, validated.
+struct Page {
+    cursor: Option<RunId>,
+    limit: usize,
+}
+
+impl Page {
+    const DEFAULT_LIMIT: usize = 50;
+    const MAX_LIMIT: usize = 200;
+}
+
+impl TryFrom<Vec<(String, String)>> for Page {
+    type Error = ValidationErrors;
+
+    fn try_from(params: Vec<(String, String)>) -> Result<Self, Self::Error> {
+        let mut cursor = Ok(None);
+        let mut limit = Ok(Self::DEFAULT_LIMIT);
+        for (key, value) in params {
+            match key.as_str() {
+                "cursor" => {
+                    cursor = value
+                        .parse::<RunId>()
+                        .map(Some)
+                        .map_err(|error| error.to_string());
+                }
+                "limit" => {
+                    limit = value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|limit| (1..=Self::MAX_LIMIT).contains(limit))
+                        .ok_or_else(|| format!("must be 1 to {}", Self::MAX_LIMIT));
+                }
+                _ => {}
+            }
+        }
+        let (cursor, limit) = Validator::new()
+            .field("cursor", cursor)
+            .field("limit", limit)
+            .finish()?;
+        Ok(Self { cursor, limit })
+    }
+}
+
 /// Gets a run.
 #[utoipa::path(
     get,
+    operation_id = "getRun",
     path = "/v1/runs/{id}",
     tag = "changes",
     params(("id" = String, Path)),

@@ -14,6 +14,7 @@ mod sandboxes;
 mod seals;
 pub(super) mod tasks;
 mod upload;
+mod workers;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,7 @@ use igloo_core::job::Job;
 use igloo_core::repo::Repo;
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::Seal;
+use igloo_core::worker::Worker;
 use utoipa::openapi::OpenApi as Document;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -58,6 +60,7 @@ pub(crate) struct ApiState {
     sandboxes: SandboxQueries,
     jobs: Arc<dyn EntityStore<Job>>,
     seals: Arc<dyn EntityStore<Seal>>,
+    workers: Arc<dyn EntityStore<Worker>>,
     repos: RepoQueries,
     changes: ChangeQueries,
     change_heads: ChangeHeads,
@@ -91,6 +94,7 @@ pub struct RestApi {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Igloo", version = "v1", description = "The Igloo control plane API."),
+    components(schemas(igloo_api::list::ListOrder)),
     modifiers(&BearerAuth),
     security(("bearer" = []))
 )]
@@ -128,6 +132,7 @@ impl RestApi {
                 sandboxes: SandboxQueries::new(platform.store::<Sandbox>()?),
                 jobs: platform.store::<Job>()?,
                 seals: platform.store::<Seal>()?,
+                workers: platform.store::<Worker>()?,
                 repos: RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
                 changes: ChangeQueries::new(platform.store::<Change>()?),
                 runs: RunQueries::new(platform.store::<Run>()?),
@@ -195,6 +200,7 @@ impl RestApi {
         OpenApiRouter::with_openapi(ApiDoc::openapi())
             .routes(routes!(sandboxes::create, sandboxes::list))
             .routes(routes!(sandboxes::get))
+            .routes(routes!(workers::list))
             .routes(routes!(sandboxes::stop))
             .routes(routes!(sandboxes::exec))
             .routes(routes!(jobs::get))
@@ -219,6 +225,7 @@ impl RestApi {
             .routes(routes!(changes::request_changes))
             .routes(routes!(changes::merge))
             .routes(routes!(runs::of_change))
+            .routes(routes!(runs::of_repo))
             .routes(routes!(runs::get))
             .routes(routes!(repos::set_secret, repos::delete_secret))
             .routes(routes!(tasks::create, tasks::list))

@@ -86,6 +86,25 @@ pub struct RunResource {
     pub started_at: Timestamp,
 }
 
+/// A page of runs, newest first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct RunList {
+    /// The runs, newest first.
+    pub items: Vec<RunResource>,
+    /// Pass as `cursor` to get the next page; absent on the last page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+impl RunList {
+    /// A page of `items`, followed by the page after `next_cursor` if any.
+    #[must_use]
+    pub const fn new(items: Vec<RunResource>, next_cursor: Option<String>) -> Self {
+        Self { items, next_cursor }
+    }
+}
+
 impl CheckResource {
     /// Check `name` at `status`.
     #[must_use]

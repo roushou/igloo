@@ -33,6 +33,7 @@ pub(super) struct LayerUpload {
 /// `GET /v1/seals/{id}`.
 #[utoipa::path(
     post,
+    operation_id = "createSeal",
     path = "/v1/sandboxes/{id}/snapshot",
     tag = "sandboxes",
     params(("id" = String, Path)),
@@ -58,6 +59,7 @@ pub(super) async fn create(
 /// Gets a seal.
 #[utoipa::path(
     get,
+    operation_id = "getSeal",
     path = "/v1/seals/{id}",
     tag = "sandboxes",
     params(("id" = String, Path)),
@@ -78,6 +80,7 @@ pub(super) async fn get(
 /// presigned URL handed to the sandbox's worker.
 #[utoipa::path(
     put,
+    operation_id = "uploadSealLayer",
     path = "/v1/seals/{id}/layer",
     tag = "sandboxes",
     params(

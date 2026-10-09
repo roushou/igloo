@@ -18,6 +18,7 @@ type Created<T> = (StatusCode, [(header::HeaderName, String); 1], Json<T>);
 /// Creates a sandbox from a registered snapshot.
 #[utoipa::path(
     post,
+    operation_id = "createSandbox",
     path = "/v1/sandboxes",
     tag = "sandboxes",
     request_body = CreateSandboxRequest,
@@ -47,6 +48,7 @@ pub(super) async fn create(
 /// Lists sandboxes, ordered by id, optionally filtered by labels (`label=key=value`, repeatable).
 #[utoipa::path(
     get,
+    operation_id = "listSandboxes",
     path = "/v1/sandboxes",
     tag = "sandboxes",
     params(
@@ -78,6 +80,7 @@ pub(super) async fn list(
 /// Gets a sandbox.
 #[utoipa::path(
     get,
+    operation_id = "getSandbox",
     path = "/v1/sandboxes/{id}",
     tag = "sandboxes",
     params(("id" = String, Path)),
@@ -95,6 +98,7 @@ pub(super) async fn get(
 /// Stops a sandbox. Idempotent.
 #[utoipa::path(
     post,
+    operation_id = "stopSandbox",
     path = "/v1/sandboxes/{id}/stop",
     tag = "sandboxes",
     params(("id" = String, Path)),
@@ -114,6 +118,7 @@ pub(super) async fn stop(
 /// Runs a process in a sandbox as a job.
 #[utoipa::path(
     post,
+    operation_id = "execInSandbox",
     path = "/v1/sandboxes/{id}/exec",
     tag = "sandboxes",
     params(("id" = String, Path)),

@@ -2,9 +2,13 @@
 
 use igloo_core::change::{self as domain, Change, Comment, Revision};
 use igloo_core::repo::BranchName;
+use std::str::FromStr;
+
 use igloo_core::{Actor, Entity, Timestamp, ValidationErrors, Validator};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+use crate::list::UnknownValue;
 
 /// Opens a change for a branch pushed to the forge.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -104,6 +108,58 @@ pub struct ApproveRequest {
     pub revision: Option<u32>,
 }
 
+/// Where the checks of a change's latest revision are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ChecksState {
+    /// The run passed.
+    Passed,
+    /// The run failed or errored.
+    Failed,
+    /// The run has not ended.
+    Running,
+    /// No run exists for the revision.
+    Missing,
+}
+
+/// Whether a human must approve a change before it merges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ApprovalState {
+    /// The change touches no protected path.
+    NotRequired,
+    /// The change touches protected paths and no human approved the latest revision.
+    Required,
+    /// The change touches protected paths and a human approved the latest revision.
+    Given,
+}
+
+/// The approval a change needs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct ApprovalNeed {
+    /// Whether it is needed and given.
+    pub state: ApprovalState,
+    /// The protected paths the change touches; empty when `state` is `not_required`.
+    #[serde(default)]
+    pub protected_paths: Vec<String>,
+}
+
+/// What stands between an open change and its merge, by the rules merging applies. Merging
+/// stays authoritative: the target may move after this was computed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct MergeReadiness {
+    /// The checks of the latest revision.
+    pub checks: ChecksState,
+    /// The approval of the latest revision.
+    pub approval: ApprovalNeed,
+    /// Whether the latest revision's base is the target branch's head, so it merges as is.
+    pub fast_forward: bool,
+}
+
 /// A change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[non_exhaustive]
@@ -130,6 +186,9 @@ pub struct ChangeResource {
     /// Review comments, oldest first.
     #[serde(default)]
     pub comments: Vec<CommentResource>,
+    /// Merge readiness; present only while the change is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<MergeReadiness>,
 }
 
 impl CommentRequest {
@@ -240,6 +299,52 @@ impl From<&Change> for ChangeResource {
                 .iter()
                 .map(CommentResource::from)
                 .collect(),
+            readiness: None,
+        }
+    }
+}
+
+impl FromStr for ChangePhase {
+    type Err = UnknownValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "open" => Ok(Self::Open),
+            "merged" => Ok(Self::Merged),
+            "closed" => Ok(Self::Closed),
+            other => Err(UnknownValue(other.to_owned())),
+        }
+    }
+}
+
+impl ChangeResource {
+    /// Sets the merge readiness.
+    #[must_use]
+    pub fn with_readiness(mut self, readiness: MergeReadiness) -> Self {
+        self.readiness = Some(readiness);
+        self
+    }
+}
+
+impl MergeReadiness {
+    /// Readiness with the given parts.
+    #[must_use]
+    pub const fn new(checks: ChecksState, approval: ApprovalNeed, fast_forward: bool) -> Self {
+        Self {
+            checks,
+            approval,
+            fast_forward,
+        }
+    }
+}
+
+impl ApprovalNeed {
+    /// An approval of `state` over `protected_paths`.
+    #[must_use]
+    pub const fn new(state: ApprovalState, protected_paths: Vec<String>) -> Self {
+        Self {
+            state,
+            protected_paths,
         }
     }
 }

@@ -2,6 +2,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use igloo_api::list::{ListOrder, PhaseFilter};
 use igloo_api::problem::Problem;
 use igloo_api::task::{
     CreateTaskRequest, TaskPhase as ApiPhase, TaskResource, TranscriptEntry as ApiEntry,
@@ -18,6 +19,7 @@ use crate::app::{AppError, RequestContext};
 /// Creates a task: the agent starts from the head of the repository's default branch.
 #[utoipa::path(
     post,
+    operation_id = "createTask",
     path = "/v1/repos/{id}/tasks",
     tag = "tasks",
     params(("id" = String, Path)),
@@ -65,37 +67,47 @@ pub(crate) async fn create_task(
     load(state, task).await
 }
 
-/// Lists a repository's tasks, oldest first.
+/// Lists a repository's tasks, oldest first unless `order=newest`, optionally only those at the
+/// given phases.
 #[utoipa::path(
     get,
+    operation_id = "listRepoTasks",
     path = "/v1/repos/{id}/tasks",
     tag = "tasks",
-    params(("id" = String, Path)),
-    responses((status = 200, body = Vec<TaskResource>))
+    params(
+        ("id" = String, Path),
+        ("phase" = Option<Vec<ApiPhase>>, Query, description = "Only tasks at this phase; repeatable"),
+        ("order" = Option<ListOrder>, Query, description = "`newest` lists the newest first"),
+    ),
+    responses((status = 200, body = Vec<TaskResource>), (status = 422, body = Problem))
 )]
 pub(super) async fn list(
     State(state): State<ApiState>,
     _: Caller,
     Path(id): Path<String>,
+    Query(params): Query<Vec<(String, String)>>,
 ) -> Result<Json<Vec<TaskResource>>, ApiError> {
-    Ok(Json(list_tasks(&state, &id).await?))
+    let filter = PhaseFilter::try_from(params).map_err(AppError::from)?;
+    Ok(Json(list_tasks(&state, &id, &filter).await?))
 }
 
-/// The tasks of repository `repo`, oldest first.
+/// The tasks of repository `repo` that `filter` selects, in its order.
 pub(crate) async fn list_tasks(
     state: &ApiState,
     repo: &str,
+    filter: &PhaseFilter<ApiPhase>,
 ) -> Result<Vec<TaskResource>, ApiError> {
     let repo: RepoId = repo
         .parse()
         .map_err(|_| ApiError::not_found("repo.not_found"))?;
     let tasks = state.tasks.of_repo(repo).await.map_err(AppError::from)?;
-    Ok(tasks.iter().map(resource).collect())
+    Ok(filter.apply(tasks.iter().map(resource).collect(), |task| task.phase))
 }
 
 /// Gets a task.
 #[utoipa::path(
     get,
+    operation_id = "getTask",
     path = "/v1/tasks/{id}",
     tag = "tasks",
     params(("id" = String, Path)),
@@ -113,6 +125,7 @@ pub(super) async fn get(
 /// a task that failed collecting its commits stops the sandbox it kept for recovery.
 #[utoipa::path(
     post,
+    operation_id = "cancelTask",
     path = "/v1/tasks/{id}/cancel",
     tag = "tasks",
     params(("id" = String, Path)),
@@ -149,6 +162,7 @@ pub(super) struct TranscriptQuery {
 /// its output with secrets masked. Poll with `after` set to the last response's `next`.
 #[utoipa::path(
     get,
+    operation_id = "getTaskTranscript",
     path = "/v1/tasks/{id}/transcript",
     tag = "tasks",
     params(("id" = String, Path), TranscriptQuery),

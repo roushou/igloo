@@ -159,6 +159,18 @@ impl Forge for GitForge {
             .ok_or_else(|| ForgeError::BranchNotFound(branch.clone()))
     }
 
+    async fn mirrored(
+        &self,
+        repo: RepoId,
+        branch: &BranchName,
+    ) -> Result<Option<CommitId>, ForgeError> {
+        match self.git.open(self.mirror(repo)).await {
+            Ok(mirror) => Ok(mirror.resolve(&RefName::from(branch)).await?),
+            Err(GitError::NotARepository(_)) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn checkout(
         &self,
         repo: RepoId,

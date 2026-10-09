@@ -13,6 +13,14 @@ pub trait Forge: Send + Sync {
     /// Fetches `branch` from the forge into the mirror; returns its head.
     async fn fetch(&self, remote: &Remote, branch: &BranchName) -> Result<CommitId, ForgeError>;
 
+    /// The head of `branch` in `repo`'s mirror as of its last fetch, without reaching the
+    /// forge; `None` when the mirror does not exist or lacks the branch.
+    async fn mirrored(
+        &self,
+        repo: RepoId,
+        branch: &BranchName,
+    ) -> Result<Option<CommitId>, ForgeError>;
+
     /// Pushes `commit`, present in the mirror, to `branch` on the forge, provided the branch
     /// is as `expected`. A branch already at `commit` is left as it is, whatever `expected`
     /// says, so retrying a push is safe.

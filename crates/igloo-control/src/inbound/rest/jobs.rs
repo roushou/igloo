@@ -23,6 +23,7 @@ use crate::app::AppError;
 /// Gets a job.
 #[utoipa::path(
     get,
+    operation_id = "getJob",
     path = "/v1/jobs/{id}",
     tag = "jobs",
     params(("id" = String, Path)),
@@ -43,6 +44,7 @@ pub(super) async fn get(
 /// the stream through `Last-Event-ID`, then one `end` event with the finished job.
 #[utoipa::path(
     get,
+    operation_id = "getJobLogs",
     path = "/v1/jobs/{id}/logs",
     tag = "jobs",
     params(

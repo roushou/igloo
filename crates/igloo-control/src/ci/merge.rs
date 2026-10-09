@@ -5,10 +5,10 @@ use igloo_core::repo::{CommitId, Repo};
 use igloo_core::{Entity, ErrorCode};
 
 use super::commands::RunQueries;
-use super::run::RunOutcome;
+use super::run::{Run, RunOutcome};
 use crate::app::{AppError, CommandBus, RequestContext};
 use crate::platform::{MergeChange, RepoQueries, TrustSettings};
-use crate::ports::{Expected, Forge, ForgeError};
+use crate::ports::{Expected, Forge, ForgeError, Remote};
 
 /// Merges changes into their target branch as one squashed commit, once their latest revision's
 /// run passed, the revision is based on the target's head and, when it touches a protected path
@@ -22,6 +22,48 @@ pub struct Merger {
     runs: RunQueries,
     forge: Arc<dyn Forge>,
     bus: CommandBus,
+}
+
+/// The state of the checks of a change's latest revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChecksState {
+    /// Its run passed.
+    Passed,
+    /// Its run failed or errored.
+    Failed,
+    /// Its run has not ended.
+    Running,
+    /// It has no run.
+    Missing,
+}
+
+/// What stands between a change and its merge, as of one fetch of the target branch.
+///
+/// Invariant: `protected` is empty unless `fast_forward` holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Readiness {
+    /// The latest revision's checks.
+    pub checks: ChecksState,
+    /// Whether the latest revision is based on the target branch's head.
+    pub fast_forward: bool,
+    /// The protected paths the latest revision changes.
+    pub protected: Vec<String>,
+    /// Whether a human approved the latest revision.
+    pub approved: bool,
+}
+
+/// The target branch's head and where the latest revision forked from it.
+struct Position {
+    target: CommitId,
+    forked: Option<CommitId>,
+    /// The protected paths changed; known only when the revision is based on the head.
+    protected: Option<Vec<String>>,
+}
+
+impl Position {
+    fn protected(&self) -> Option<&[String]> {
+        self.protected.as_deref()
+    }
 }
 
 /// Why a change cannot merge.
@@ -73,55 +115,37 @@ impl Merger {
             ChangePhase::Closed => return Err(AppError::domain(&ChangeError::Ended)),
         }
         let revision = change.latest();
-        let passed = self.runs.of_change(change.id()).await?.iter().any(|run| {
-            run.revision() == revision.number && run.outcome() == Some(&RunOutcome::Passed)
-        });
-        if !passed {
+        if self.checks(change).await? != ChecksState::Passed {
             return Err(AppError::domain(&MergeError::ChecksNotPassed));
         }
-        let repo = self
-            .repos
-            .get(change.repo())
-            .await?
-            .ok_or_else(|| AppError::not_found(Repo::NAME, &change.repo()))?;
-        let remote = self.repos.remote(&repo).await?;
+        let remote = self.remote(change).await?;
         let target = self.forge.fetch(&remote, change.target()).await?;
-        let forked = self
-            .forge
-            .merge_base(repo.id(), &revision.head, &target)
-            .await?;
-        if forked.as_ref() != Some(&target) {
+        let position = self.position(change, target).await?;
+        let Some(protected) = position.protected() else {
             // An earlier attempt may have pushed the squash and stopped before recording it.
-            if let Some(base) = forked
-                && self.squash(change, revision, &base).await? == target
+            if let Some(base) = position.forked
+                && self.squash(change, revision, &base).await? == position.target
             {
-                return self.record(change, revision, target, context).await;
+                return self
+                    .record(change, revision, position.target, context)
+                    .await;
             }
             return Err(AppError::domain(&MergeError::TargetMoved));
-        }
-        let trust = match self
-            .forge
-            .read_file(repo.id(), &target, TrustSettings::PATH)
-            .await?
-        {
-            Some(bytes) => TrustSettings::try_from(String::from_utf8_lossy(&bytes).as_ref())
-                .map_err(AppError::Validation)?,
-            None => TrustSettings::default(),
         };
-        let changed = self
-            .forge
-            .changed_paths(repo.id(), &target, &revision.head)
-            .await?;
-        let protected = trust.protected(&changed);
         if !protected.is_empty() && !change.approved_by_human(revision.number) {
             return Err(AppError::domain(&MergeError::ApprovalRequired(
                 protected.join(", "),
             )));
         }
-        let squash = self.squash(change, revision, &target).await?;
+        let squash = self.squash(change, revision, &position.target).await?;
         match self
             .forge
-            .push(&remote, &squash, change.target(), Expected::At(target))
+            .push(
+                &remote,
+                &squash,
+                change.target(),
+                Expected::At(position.target),
+            )
             .await
         {
             Ok(()) => {}
@@ -129,6 +153,96 @@ impl Merger {
             Err(error) => return Err(error.into()),
         }
         self.record(change, revision, squash, context).await
+    }
+
+    /// What stands between `change`'s latest revision and its merge, by the rules
+    /// [`Merger::merge`] applies, judged against the target branch's head in the mirror as of
+    /// its last fetch. Never reaches the forge; a mirror without the target reports no fast
+    /// forward and no protected paths.
+    pub async fn readiness(&self, change: &Change) -> Result<Readiness, AppError> {
+        let checks = self.checks(change).await?;
+        let revision = change.latest().number;
+        let protected = match self.forge.mirrored(change.repo(), change.target()).await? {
+            Some(target) => self.position(change, target).await?.protected,
+            None => None,
+        };
+        Ok(Readiness {
+            checks,
+            fast_forward: protected.is_some(),
+            approved: change.approved_by_human(revision),
+            protected: protected.unwrap_or_default(),
+        })
+    }
+
+    /// The state of the latest revision's run.
+    async fn checks(&self, change: &Change) -> Result<ChecksState, AppError> {
+        let number = change.latest().number;
+        let runs = self.runs.of_change(change.id()).await?;
+        let outcomes: Vec<Option<&RunOutcome>> = runs
+            .iter()
+            .filter(|run| run.revision() == number)
+            .map(Run::outcome)
+            .collect();
+        Ok(if outcomes.contains(&Some(&RunOutcome::Passed)) {
+            ChecksState::Passed
+        } else if outcomes.iter().any(Option::is_some) {
+            ChecksState::Failed
+        } else if outcomes.is_empty() {
+            ChecksState::Missing
+        } else {
+            ChecksState::Running
+        })
+    }
+
+    /// Where the latest revision sits against `target`, the target branch's head in the mirror.
+    async fn position(&self, change: &Change, target: CommitId) -> Result<Position, AppError> {
+        let revision = change.latest();
+        let repo = self.repo(change).await?;
+        let forked = self
+            .forge
+            .merge_base(repo.id(), &revision.head, &target)
+            .await?;
+        let protected = if forked.as_ref() == Some(&target) {
+            let trust = match self
+                .forge
+                .read_file(repo.id(), &target, TrustSettings::PATH)
+                .await?
+            {
+                Some(bytes) => TrustSettings::try_from(String::from_utf8_lossy(&bytes).as_ref())
+                    .map_err(AppError::Validation)?,
+                None => TrustSettings::default(),
+            };
+            let changed = self
+                .forge
+                .changed_paths(repo.id(), &target, &revision.head)
+                .await?;
+            Some(
+                trust
+                    .protected(&changed)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        Ok(Position {
+            target,
+            forked,
+            protected,
+        })
+    }
+
+    async fn repo(&self, change: &Change) -> Result<Repo, AppError> {
+        self.repos
+            .get(change.repo())
+            .await?
+            .ok_or_else(|| AppError::not_found(Repo::NAME, &change.repo()))
+    }
+
+    async fn remote(&self, change: &Change) -> Result<Remote, AppError> {
+        let repo = self.repo(change).await?;
+        self.repos.remote(&repo).await
     }
 
     /// The squash of `revision` onto `onto`: the same commit for the same change, revision and

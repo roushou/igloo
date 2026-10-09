@@ -16,7 +16,7 @@
           "snapshots"
         ],
         "summary": "Downloads a blob. Authenticated by the bearer token or a presigned download URL.",
-        "operationId": "get",
+        "operationId": "getBlob",
         "parameters": [
           {
             "name": "digest",
@@ -86,7 +86,7 @@
           "snapshots"
         ],
         "summary": "Uploads bytes under their blake3 digest. Idempotent; rejected if the bytes do not match.\nAuthenticated by the bearer token or a presigned upload URL.",
-        "operationId": "put",
+        "operationId": "putBlob",
         "parameters": [
           {
             "name": "digest",
@@ -170,7 +170,7 @@
           "changes"
         ],
         "summary": "Gets a change.",
-        "operationId": "get",
+        "operationId": "getChange",
         "parameters": [
           {
             "name": "id",
@@ -209,7 +209,7 @@
           "changes"
         ],
         "summary": "Approves a change's latest revision as the caller, who must be a human.",
-        "operationId": "approve",
+        "operationId": "approveChange",
         "parameters": [
           {
             "name": "id",
@@ -267,7 +267,7 @@
           "changes"
         ],
         "summary": "Closes a change without merging.",
-        "operationId": "close",
+        "operationId": "closeChange",
         "parameters": [
           {
             "name": "id",
@@ -315,7 +315,7 @@
           "changes"
         ],
         "summary": "Comments on a revision of a change, the latest by default, optionally on a line of a file.",
-        "operationId": "comment",
+        "operationId": "commentOnChange",
         "parameters": [
           {
             "name": "id",
@@ -382,7 +382,7 @@
           "changes"
         ],
         "summary": "Merges a change: its latest revision's checks must have passed, it must be based on the\ntarget branch's head, and changes to protected paths need a human approval. Igloo pushes\nthe revision to the target branch as one squashed commit naming the change.",
-        "operationId": "merge",
+        "operationId": "mergeChange",
         "parameters": [
           {
             "name": "id",
@@ -430,7 +430,7 @@
           "changes"
         ],
         "summary": "Asks for another revision, carrying the comments made since the previous request. A change\nmade by a task sends them to its agent as its next turn.",
-        "operationId": "request_changes",
+        "operationId": "requestChanges",
         "parameters": [
           {
             "name": "id",
@@ -478,7 +478,7 @@
           "changes"
         ],
         "summary": "Records the source branch's current head as the next revision; an unchanged head records\nnothing.",
-        "operationId": "revise",
+        "operationId": "reviseChange",
         "parameters": [
           {
             "name": "id",
@@ -526,7 +526,7 @@
           "changes"
         ],
         "summary": "Lists the runs of a change, one per revision, oldest first.",
-        "operationId": "of_change",
+        "operationId": "listChangeRuns",
         "parameters": [
           {
             "name": "id",
@@ -624,7 +624,7 @@
           "jobs"
         ],
         "summary": "Gets a job.",
-        "operationId": "get",
+        "operationId": "getJob",
         "parameters": [
           {
             "name": "id",
@@ -663,7 +663,7 @@
           "jobs"
         ],
         "summary": "Streams a job's output as server-sent events: `stdout` and `stderr` events whose id resumes\nthe stream through `Last-Event-ID`, then one `end` event with the finished job.",
-        "operationId": "logs",
+        "operationId": "getJobLogs",
         "parameters": [
           {
             "name": "id",
@@ -716,7 +716,7 @@
           "repos"
         ],
         "summary": "Lists repositories, oldest first.",
-        "operationId": "list",
+        "operationId": "listRepos",
         "responses": {
           "200": {
             "content": {
@@ -737,7 +737,7 @@
           "repos"
         ],
         "summary": "Registers a repository.",
-        "operationId": "register",
+        "operationId": "registerRepo",
         "requestBody": {
           "content": {
             "application/json": {
@@ -785,7 +785,7 @@
           "repos"
         ],
         "summary": "Gets a repository.",
-        "operationId": "get",
+        "operationId": "getRepo",
         "parameters": [
           {
             "name": "id",
@@ -823,8 +823,8 @@
         "tags": [
           "changes"
         ],
-        "summary": "Lists a repository's changes, oldest first.",
-        "operationId": "list",
+        "summary": "Lists a repository's changes, oldest first unless `order=newest`, optionally only those at\nthe given phases. Open changes carry their merge readiness.",
+        "operationId": "listRepoChanges",
         "parameters": [
           {
             "name": "id",
@@ -832,6 +832,27 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "phase",
+            "in": "query",
+            "description": "Only changes at this phase; repeatable",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ChangePhase"
+              }
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "`newest` lists the newest first",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ListOrder"
             }
           }
         ],
@@ -847,6 +868,15 @@
                 }
               }
             }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       },
@@ -855,7 +885,7 @@
           "changes"
         ],
         "summary": "Opens a change proposing a branch pushed to the forge; its head is the first revision.",
-        "operationId": "open",
+        "operationId": "openChange",
         "parameters": [
           {
             "name": "id",
@@ -916,13 +946,81 @@
         }
       }
     },
+    "/v1/repos/{id}/runs": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Lists a repository's runs, newest first, a page at a time.",
+        "operationId": "listRepoRuns",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`next_cursor` of the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200; 50 when omitted",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunList"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/repos/{id}/secrets": {
       "get": {
         "tags": [
           "repos"
         ],
         "summary": "Lists the names of a repository's secrets; values are never returned.",
-        "operationId": "list_secrets",
+        "operationId": "listRepoSecrets",
         "parameters": [
           {
             "name": "id",
@@ -961,7 +1059,7 @@
           "repos"
         ],
         "summary": "Sets or replaces a secret. The body is its value, as text.",
-        "operationId": "set_secret",
+        "operationId": "setRepoSecret",
         "parameters": [
           {
             "name": "id",
@@ -1018,7 +1116,7 @@
           "repos"
         ],
         "summary": "Deletes a secret.",
-        "operationId": "delete_secret",
+        "operationId": "deleteRepoSecret",
         "parameters": [
           {
             "name": "id",
@@ -1057,7 +1155,7 @@
           "repos"
         ],
         "summary": "Snapshots a repository at a commit: the checkout under `/workspace`, with a shallow `.git`,\nover an optional base snapshot. A branch is fetched from the forge first.",
-        "operationId": "snapshot",
+        "operationId": "snapshotRepo",
         "parameters": [
           {
             "name": "id",
@@ -1114,8 +1212,8 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Lists a repository's tasks, oldest first.",
-        "operationId": "list",
+        "summary": "Lists a repository's tasks, oldest first unless `order=newest`, optionally only those at the\ngiven phases.",
+        "operationId": "listRepoTasks",
         "parameters": [
           {
             "name": "id",
@@ -1123,6 +1221,27 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "phase",
+            "in": "query",
+            "description": "Only tasks at this phase; repeatable",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/TaskPhase"
+              }
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "`newest` lists the newest first",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ListOrder"
             }
           }
         ],
@@ -1138,6 +1257,15 @@
                 }
               }
             }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       },
@@ -1146,7 +1274,7 @@
           "tasks"
         ],
         "summary": "Creates a task: the agent starts from the head of the repository's default branch.",
-        "operationId": "create",
+        "operationId": "createTask",
         "parameters": [
           {
             "name": "id",
@@ -1204,7 +1332,7 @@
           "changes"
         ],
         "summary": "Gets a run.",
-        "operationId": "get",
+        "operationId": "getRun",
         "parameters": [
           {
             "name": "id",
@@ -1243,7 +1371,7 @@
           "sandboxes"
         ],
         "summary": "Lists sandboxes, ordered by id, optionally filtered by labels (`label=key=value`, repeatable).",
-        "operationId": "list",
+        "operationId": "listSandboxes",
         "parameters": [
           {
             "name": "label",
@@ -1304,7 +1432,7 @@
           "sandboxes"
         ],
         "summary": "Creates a sandbox from a registered snapshot.",
-        "operationId": "create",
+        "operationId": "createSandbox",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -1366,7 +1494,7 @@
           "sandboxes"
         ],
         "summary": "Gets a sandbox.",
-        "operationId": "get",
+        "operationId": "getSandbox",
         "parameters": [
           {
             "name": "id",
@@ -1405,7 +1533,7 @@
           "sandboxes"
         ],
         "summary": "Runs a process in a sandbox as a job.",
-        "operationId": "exec",
+        "operationId": "execInSandbox",
         "parameters": [
           {
             "name": "id",
@@ -1472,7 +1600,7 @@
           "sandboxes"
         ],
         "summary": "Seals a running sandbox into a snapshot. The seal completes in the background; poll it with\n`GET /v1/seals/{id}`.",
-        "operationId": "create",
+        "operationId": "createSeal",
         "parameters": [
           {
             "name": "id",
@@ -1520,7 +1648,7 @@
           "sandboxes"
         ],
         "summary": "Stops a sandbox. Idempotent.",
-        "operationId": "stop",
+        "operationId": "stopSandbox",
         "parameters": [
           {
             "name": "id",
@@ -1559,7 +1687,7 @@
           "sandboxes"
         ],
         "summary": "Gets a seal.",
-        "operationId": "get",
+        "operationId": "getSeal",
         "parameters": [
           {
             "name": "id",
@@ -1598,7 +1726,7 @@
           "sandboxes"
         ],
         "summary": "Uploads the layer that completes a seal, as a tar archive. Authenticated only by the\npresigned URL handed to the sandbox's worker.",
-        "operationId": "upload",
+        "operationId": "uploadSealLayer",
         "parameters": [
           {
             "name": "id",
@@ -1717,7 +1845,7 @@
           "snapshots"
         ],
         "summary": "Registers a snapshot of uploaded layers, over a base snapshot's layers if one is named.",
-        "operationId": "create_snapshot",
+        "operationId": "createSnapshot",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1756,7 +1884,7 @@
           "snapshots"
         ],
         "summary": "Pulls a public container image from its registry and registers its layers as a snapshot.",
-        "operationId": "import_image",
+        "operationId": "importImage",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1804,7 +1932,7 @@
           "snapshots"
         ],
         "summary": "Gets a snapshot.",
-        "operationId": "get_snapshot",
+        "operationId": "getSnapshot",
         "parameters": [
           {
             "name": "id",
@@ -1843,7 +1971,7 @@
           "tasks"
         ],
         "summary": "Gets a task.",
-        "operationId": "get",
+        "operationId": "getTask",
         "parameters": [
           {
             "name": "id",
@@ -1882,7 +2010,7 @@
           "tasks"
         ],
         "summary": "Cancels a task and stops its sandbox. Cancelling an ended task changes nothing, except that\na task that failed collecting its commits stops the sandbox it kept for recovery.",
-        "operationId": "cancel",
+        "operationId": "cancelTask",
         "parameters": [
           {
             "name": "id",
@@ -1921,7 +2049,7 @@
           "tasks"
         ],
         "summary": "A task's transcript from a position on: what its tool said and did, turn by turn, read from\nits output with secrets masked. Poll with `after` set to the last response's `next`.",
-        "operationId": "transcript",
+        "operationId": "getTaskTranscript",
         "parameters": [
           {
             "name": "id",
@@ -1964,10 +2092,53 @@
           }
         }
       }
+    },
+    "/v1/workers": {
+      "get": {
+        "tags": [
+          "workers"
+        ],
+        "summary": "Lists the workers, ordered by id, with what their sandboxes hold of them.",
+        "operationId": "listWorkers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkerResource"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ApprovalNeed": {
+        "type": "object",
+        "description": "The approval a change needs.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "protected_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The protected paths the change touches; empty when `state` is `not_required`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ApprovalState",
+            "description": "Whether it is needed and given."
+          }
+        }
+      },
       "ApprovalResource": {
         "type": "object",
         "description": "A human's approval of a revision.",
@@ -1993,6 +2164,15 @@
             "minimum": 0
           }
         }
+      },
+      "ApprovalState": {
+        "type": "string",
+        "description": "Whether a human must approve a change before it merges.",
+        "enum": [
+          "not_required",
+          "required",
+          "given"
+        ]
       },
       "ApproveRequest": {
         "type": "object",
@@ -2060,6 +2240,17 @@
           "phase": {
             "$ref": "#/components/schemas/ChangePhase",
             "description": "Where it is."
+          },
+          "readiness": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MergeReadiness",
+                "description": "Merge readiness; present only while the change is open."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "repo": {
             "type": "string",
@@ -2135,6 +2326,16 @@
           "passed",
           "failed",
           "errored"
+        ]
+      },
+      "ChecksState": {
+        "type": "string",
+        "description": "Where the checks of a change's latest revision are.",
+        "enum": [
+          "passed",
+          "failed",
+          "running",
+          "missing"
         ]
       },
       "CommentRequest": {
@@ -2605,6 +2806,14 @@
           }
         }
       },
+      "ListOrder": {
+        "type": "string",
+        "description": "The order of a list. Lists are oldest first unless asked otherwise.",
+        "enum": [
+          "oldest",
+          "newest"
+        ]
+      },
       "MediaType": {
         "type": "string",
         "description": "How a layer blob is encoded.",
@@ -2612,6 +2821,29 @@
           "tar",
           "tar+gzip"
         ]
+      },
+      "MergeReadiness": {
+        "type": "object",
+        "description": "What stands between an open change and its merge, by the rules merging applies. Merging\nstays authoritative: the target may move after this was computed.",
+        "required": [
+          "checks",
+          "approval",
+          "fast_forward"
+        ],
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/ApprovalNeed",
+            "description": "The approval of the latest revision."
+          },
+          "checks": {
+            "$ref": "#/components/schemas/ChecksState",
+            "description": "The checks of the latest revision."
+          },
+          "fast_forward": {
+            "type": "boolean",
+            "description": "Whether the latest revision's base is the target branch's head, so it merges as is."
+          }
+        }
       },
       "NetworkPolicy": {
         "type": "string",
@@ -2813,6 +3045,29 @@
             "format": "int32",
             "description": "Its position, from 1.",
             "minimum": 0
+          }
+        }
+      },
+      "RunList": {
+        "type": "object",
+        "description": "A page of runs, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunResource"
+            },
+            "description": "The runs, newest first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` to get the next page; absent on the last page."
           }
         }
       },
@@ -3431,6 +3686,140 @@
           "running",
           "succeeded",
           "failed"
+        ]
+      },
+      "WorkerAllocation": {
+        "type": "object",
+        "description": "What the sandboxes placed on a worker hold of it, by their limits.",
+        "required": [
+          "sandboxes",
+          "millicpus",
+          "memory_mib"
+        ],
+        "properties": {
+          "memory_mib": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their memory limits, in MiB, summed.",
+            "minimum": 0
+          },
+          "millicpus": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their CPU limits, in millicpus, summed.",
+            "minimum": 0
+          },
+          "sandboxes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Sandboxes that are not stopped or failed.",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkerCapabilities": {
+        "type": "object",
+        "description": "What a worker offers.",
+        "required": [
+          "os",
+          "arch",
+          "runtimes",
+          "protocol"
+        ],
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "The CPU architecture: `x86_64` or `aarch64`."
+          },
+          "os": {
+            "type": "string",
+            "description": "The operating system: `linux` or `macos`."
+          },
+          "protocol": {
+            "type": "string",
+            "description": "The worker protocol version it speaks."
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The sandbox runtimes it offers: `process`, `oci` or `firecracker`."
+          }
+        }
+      },
+      "WorkerConnection": {
+        "type": "string",
+        "description": "Whether a worker's stream to the server is open.",
+        "enum": [
+          "connected",
+          "disconnected",
+          "lost"
+        ]
+      },
+      "WorkerResource": {
+        "type": "object",
+        "description": "A worker.",
+        "required": [
+          "id",
+          "labels",
+          "connection",
+          "schedulability",
+          "schedulable",
+          "capabilities",
+          "allocated"
+        ],
+        "properties": {
+          "allocated": {
+            "$ref": "#/components/schemas/WorkerAllocation",
+            "description": "What its sandboxes hold."
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/WorkerCapabilities",
+            "description": "What it offers."
+          },
+          "connection": {
+            "$ref": "#/components/schemas/WorkerConnection",
+            "description": "Its connection."
+          },
+          "disconnected_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its stream closed, while disconnected."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`wrk_...`)."
+          },
+          "labels": {
+            "type": "object",
+            "description": "Its labels.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "schedulability": {
+            "$ref": "#/components/schemas/WorkerSchedulability",
+            "description": "Whether new work may be placed on it by spec."
+          },
+          "schedulable": {
+            "type": "boolean",
+            "description": "Whether new work may be placed on it now: connected and schedulable."
+          }
+        }
+      },
+      "WorkerSchedulability": {
+        "type": "string",
+        "description": "Whether new work may be placed on a worker.",
+        "enum": [
+          "schedulable",
+          "draining"
         ]
       }
     },

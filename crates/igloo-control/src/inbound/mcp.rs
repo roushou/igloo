@@ -10,6 +10,7 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use igloo_api::change::CommentRequest;
+use igloo_api::list::PhaseFilter;
 use igloo_api::task::CreateTaskRequest;
 use igloo_core::Actor;
 use rmcp::handler::server::tool::Extension;
@@ -155,7 +156,7 @@ impl Mcp {
         description = "Lists a repository's tasks, oldest first."
     )]
     async fn task_list(&self, Parameters(params): Parameters<RepoParams>) -> CallToolResult {
-        Self::result(tasks::list_tasks(&self.state, &params.repo).await)
+        Self::result(tasks::list_tasks(&self.state, &params.repo, &PhaseFilter::default()).await)
     }
 
     #[tool(

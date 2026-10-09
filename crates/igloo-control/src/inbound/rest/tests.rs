@@ -14,15 +14,26 @@ use uuid::Uuid;
 use super::{DevToken, RestApi};
 use crate::adapters::memory::FixedClock;
 use crate::app::ControllerSettings;
+use crate::ci::{CheckOutcome, CheckSpec, Planned, Run, SandboxSettings};
 use crate::platform::{
     ChangeModule, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule, WorkerModule,
 };
-use crate::testing::{FIXTURE_IMAGE, MemoryPlatform, START, blob_urls};
+use crate::ports::{CommitMeta, CorrelationId, EntityStore, Versioned};
+use crate::testing::{FIXTURE_IMAGE, MemoryPlatform, MemoryStores, START, blob_urls};
 
 const TOKEN: &str = "dev-token";
 
 fn api() -> Router {
-    let MemoryPlatform { mut builder, .. } = MemoryPlatform::new();
+    api_with_stores().0
+}
+
+/// The API, with the stores tests seed state through.
+fn api_with_stores() -> (Router, Arc<dyn EntityStore<Run>>, MemoryStores) {
+    let MemoryPlatform {
+        mut builder,
+        stores,
+    } = MemoryPlatform::new();
+    let runs = builder.store::<Run>().expect("run store");
     builder
         .install(SandboxModule {
             settings: ControllerSettings::default(),
@@ -49,7 +60,7 @@ fn api() -> Router {
     let api =
         RestApi::new(&builder, builder.bus(), DevToken::new(TOKEN, actor), urls).expect("api");
     let _platform = builder.build();
-    api.router()
+    (api.router(), runs, stores)
 }
 
 struct Call {
@@ -810,4 +821,411 @@ async fn a_stream_without_a_cursor_starts_at_the_head() {
         .drain()
         .await;
     assert_eq!(history.len(), 3);
+}
+
+/// Clients address operations by `operationId`, so each must name exactly one.
+#[test]
+fn every_operation_id_is_unique() {
+    let document = serde_json::to_value(RestApi::openapi()).expect("serialize");
+    let mut seen = std::collections::BTreeSet::new();
+    for (path, item) in document["paths"].as_object().expect("paths") {
+        for (method, operation) in item.as_object().expect("path item") {
+            let id = operation["operationId"].as_str();
+            let id = id.unwrap_or_else(|| panic!("{method} {path} has no operationId"));
+            assert!(
+                seen.insert(id.to_owned()),
+                "{id} names more than one operation"
+            );
+        }
+    }
+}
+
+/// Registers `origin` and returns the repository's id.
+async fn register_origin(router: &Router, origin: &igloo_git::testing::Fixture) -> String {
+    let (status, repo, _) = Call::new(Method::POST, "/v1/repos")
+        .json(&json!({ "location": origin.location().to_string() }))
+        .send(router)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{repo}");
+    repo["id"].as_str().expect("id").to_owned()
+}
+
+async fn open_change(router: &Router, repo: &str, branch: &str) -> Value {
+    let (status, change, _) = Call::new(Method::POST, format!("/v1/repos/{repo}/changes"))
+        .json(&json!({ "branch": branch, "title": format!("Change {branch}") }))
+        .send(router)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{change}");
+    change
+}
+
+/// Stores a run of `revision` of `change` that ran one check and ended with `outcome`.
+async fn store_run(runs: &Arc<dyn EntityStore<Run>>, change: &Value, n: u128, passed: bool) {
+    let change_id = change["id"]
+        .as_str()
+        .expect("id")
+        .parse()
+        .expect("change id");
+    let repo = change["repo"]
+        .as_str()
+        .expect("repo")
+        .parse()
+        .expect("repo id");
+    let commit = change["revisions"][0]["head"]
+        .as_str()
+        .expect("head")
+        .parse()
+        .expect("commit");
+    let id = Id::from_uuid(Uuid::from_u128(n));
+    let mut run = Run::new(id, repo, (change_id, 1), commit, START);
+    let planned = Planned {
+        settings: SandboxSettings {
+            isolation: igloo_core::sandbox::Isolation::Any,
+            limits: igloo_core::sandbox::ResourceLimits::default(),
+            network: igloo_core::sandbox::NetworkPolicy::DenyAll,
+            env: igloo_core::process::EnvVars::default(),
+            secrets: std::collections::BTreeSet::new(),
+        },
+        checks: vec![CheckSpec {
+            name: "test".to_owned(),
+            run: "true".to_owned(),
+            timeout_seconds: 60,
+        }],
+    };
+    let snapshot = igloo_core::snapshot::SnapshotId::from(Digest::from_blake3([1; 32]));
+    run.prepared(planned, Some(snapshot), None)
+        .expect("prepared");
+    let job = Id::from_uuid(Uuid::from_u128(n + 1000));
+    run.checks_started(Id::from_uuid(Uuid::from_u128(n + 2000)), vec![job])
+        .expect("started");
+    let outcome = if passed {
+        CheckOutcome::Passed
+    } else {
+        CheckOutcome::Failed { exit_code: 1 }
+    };
+    run.job_ended(job, outcome);
+    let meta = CommitMeta {
+        actor: Actor::Human {
+            user: Id::from_uuid(Uuid::from_u128(7)),
+        },
+        time: START,
+        correlation_id: CorrelationId::from_uuid(Uuid::from_u128(n)),
+        causation_id: None,
+    };
+    let mut run = Versioned::new(run);
+    runs.commit(&mut run, &meta).await.expect("commit run");
+}
+
+#[tokio::test]
+async fn changes_are_filtered_by_phase_and_ordered() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    for branch in ["first", "second", "third"] {
+        origin.switch(branch);
+        origin.commit(branch, &[(branch, Some(branch))]);
+    }
+    let repo = register_origin(&router, &origin).await;
+    let mut ids = Vec::new();
+    for branch in ["first", "second", "third"] {
+        ids.push(open_change(&router, &repo, branch).await["id"].clone());
+    }
+    let (status, _, _) = Call::new(
+        Method::POST,
+        format!("/v1/changes/{}/close", ids[0].as_str().expect("id")),
+    )
+    .send(&router)
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let list = |query: &'static str| {
+        let router = router.clone();
+        let uri = format!("/v1/repos/{repo}/changes{query}");
+        async move {
+            let (status, body, _) = Call::new(Method::GET, uri).send(&router).await;
+            (status, body)
+        }
+    };
+    let ids_of = |body: &Value| -> Vec<Value> {
+        body.as_array()
+            .expect("array")
+            .iter()
+            .map(|change| change["id"].clone())
+            .collect()
+    };
+    let (_, all) = list("").await;
+    assert_eq!(ids_of(&all), ids, "oldest first by default");
+    let (_, open) = list("?phase=open").await;
+    assert_eq!(ids_of(&open), ids[1..], "only open changes");
+    let (_, newest) = list("?order=newest").await;
+    assert_eq!(
+        ids_of(&newest),
+        [ids[2].clone(), ids[1].clone(), ids[0].clone()]
+    );
+    let (_, either) = list("?phase=closed&phase=merged&order=newest").await;
+    assert_eq!(ids_of(&either), [ids[0].clone()]);
+    let (status, body) = list("?phase=bogus&order=sideways").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "validation.invalid");
+}
+
+#[tokio::test]
+async fn merge_readiness_agrees_with_what_merging_requires() {
+    let (router, runs, _stores) = api_with_stores();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit(
+        "base",
+        &[(".igloo/agents.toml", Some("protected = [\"api/**\"]\n"))],
+    );
+    origin.switch("feature");
+    origin.commit(
+        "change",
+        &[("api/schema.json", Some("{}")), ("src/lib.rs", Some("v1"))],
+    );
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    let id = change["id"].as_str().expect("id");
+    let get = || async {
+        let (status, body, _) = Call::new(Method::GET, format!("/v1/changes/{id}"))
+            .send(&router)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["readiness"].clone()
+    };
+    let merge = || async {
+        let (status, body, _) = Call::new(Method::POST, format!("/v1/changes/{id}/merge"))
+            .send(&router)
+            .await;
+        (status, body)
+    };
+
+    let readiness = get().await;
+    assert_eq!(readiness["checks"], "missing");
+    assert_eq!(readiness["approval"]["state"], "required");
+    assert_eq!(
+        readiness["approval"]["protected_paths"],
+        json!(["api/schema.json"])
+    );
+    assert_eq!(readiness["fast_forward"], true);
+    assert_eq!(merge().await.1["code"], "change.checks_not_passed");
+
+    store_run(&runs, &change, 1, true).await;
+    let readiness = get().await;
+    assert_eq!(readiness["checks"], "passed");
+    assert_eq!(
+        readiness["approval"]["state"], "required",
+        "checks do not approve"
+    );
+    let (status, body) = merge().await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "change.approval_required");
+
+    let (status, body, _) = Call::new(Method::POST, format!("/v1/changes/{id}/approve"))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let readiness = get().await;
+    assert_eq!(readiness["approval"]["state"], "given");
+    assert_eq!(
+        readiness["approval"]["protected_paths"],
+        json!(["api/schema.json"])
+    );
+    let (status, body) = merge().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["phase"], "merged");
+    assert!(
+        body.get("readiness").is_none(),
+        "only open changes have readiness"
+    );
+}
+
+#[tokio::test]
+async fn readiness_reports_failed_checks_and_a_moved_target() {
+    let (router, runs, _stores) = api_with_stores();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    let id = change["id"].as_str().expect("id");
+    store_run(&runs, &change, 1, false).await;
+    origin.switch("main");
+    origin.commit("move", &[("other.txt", Some("x"))]);
+    let readiness = || async {
+        let (_, body, _) = Call::new(Method::GET, format!("/v1/changes/{id}"))
+            .send(&router)
+            .await;
+        body["readiness"].clone()
+    };
+    let before = readiness().await;
+    assert_eq!(before["checks"], "failed");
+    assert_eq!(before["approval"]["state"], "not_required");
+    assert_eq!(
+        before["fast_forward"], true,
+        "readiness judges the mirror as last fetched"
+    );
+    origin.switch("other");
+    origin.commit("other", &[("other", Some("y"))]);
+    open_change(&router, &repo, "other").await;
+    assert_eq!(readiness().await["fast_forward"], false);
+}
+
+#[tokio::test]
+async fn readiness_is_answered_without_reaching_the_forge() {
+    let (router, _runs, _stores) = api_with_stores();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    let id = change["id"].as_str().expect("id");
+    std::fs::remove_dir_all(origin.origin()).expect("remove the origin");
+    for uri in [
+        format!("/v1/changes/{id}"),
+        format!("/v1/repos/{repo}/changes"),
+    ] {
+        let (status, body, _) = Call::new(Method::GET, uri).send(&router).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let change = if body.is_array() { &body[0] } else { &body };
+        assert_eq!(change["readiness"]["fast_forward"], true);
+    }
+    let (status, _, _) = Call::new(Method::POST, format!("/v1/changes/{id}/merge"))
+        .send(&router)
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "merge still needs passing checks first"
+    );
+}
+
+#[tokio::test]
+async fn runs_of_a_repository_are_listed_newest_first_in_pages() {
+    let (router, runs, _stores) = api_with_stores();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    for n in 1..=3 {
+        store_run(&runs, &change, n, true).await;
+    }
+    let uri = format!("/v1/repos/{repo}/runs");
+    let (status, page, _) = Call::new(Method::GET, format!("{uri}?limit=2"))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|run| run["id"].as_str().expect("id").to_owned())
+            .collect()
+    };
+    let first = ids(&page);
+    assert_eq!(first.len(), 2);
+    assert!(first[0] > first[1], "newest first");
+    let cursor = page["next_cursor"].as_str().expect("more pages");
+    let (_, rest, _) = Call::new(Method::GET, format!("{uri}?limit=2&cursor={cursor}"))
+        .send(&router)
+        .await;
+    let last = ids(&rest);
+    assert_eq!(last.len(), 1);
+    assert!(last[0] < first[1]);
+    assert!(rest.get("next_cursor").is_none());
+    let (status, _, _) = Call::new(Method::GET, format!("{uri}?limit=0"))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _, _) = Call::new(Method::GET, "/v1/repos/repo_unknown/runs")
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn workers_are_listed_with_what_their_sandboxes_hold() {
+    let (router, _runs, stores) = api_with_stores();
+    let (status, workers, _) = Call::new(Method::GET, "/v1/workers").send(&router).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(workers, json!([]));
+
+    let capabilities = igloo_core::worker::Capabilities::new(
+        igloo_core::worker::Os::Linux,
+        igloo_core::worker::Arch::X86_64,
+        [igloo_core::worker::RuntimeKind::Process].into(),
+        igloo_core::worker::ProtocolVersion::V1,
+    )
+    .expect("capabilities");
+    let worker_id: igloo_core::worker::WorkerId = Id::from_uuid(Uuid::from_u128(50));
+    let worker = igloo_core::worker::Worker::new(
+        worker_id,
+        capabilities,
+        igloo_core::Labels::from_pairs([("zone", "a")]).expect("labels"),
+    );
+    let mut worker = Versioned::new(worker);
+    let meta = CommitMeta {
+        actor: Actor::Human {
+            user: Id::from_uuid(Uuid::from_u128(7)),
+        },
+        time: START,
+        correlation_id: CorrelationId::from_uuid(Uuid::from_u128(1)),
+        causation_id: None,
+    };
+    stores
+        .workers
+        .commit(&mut worker, &meta)
+        .await
+        .expect("worker");
+
+    let snapshot = snapshot(&router).await;
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        ids.push(create_sandbox(&router, &snapshot, &json!({})).await);
+    }
+    for id in &ids {
+        let mut sandbox = stores
+            .sandboxes
+            .load(id.parse().expect("sandbox id"))
+            .await
+            .expect("load")
+            .expect("sandbox");
+        sandbox
+            .entity_mut()
+            .schedule(igloo_core::Entity::id(worker.entity()))
+            .expect("schedule");
+        stores
+            .sandboxes
+            .commit(&mut sandbox, &meta)
+            .await
+            .expect("commit");
+    }
+    let (_, workers, _) = Call::new(Method::GET, "/v1/workers").send(&router).await;
+    let worker = &workers[0];
+    assert_eq!(worker["id"], worker_id.to_string());
+    assert_eq!(worker["labels"], json!({ "zone": "a" }));
+    assert_eq!(worker["connection"], "connected");
+    assert_eq!(worker["schedulability"], "schedulable");
+    assert_eq!(worker["schedulable"], true);
+    assert_eq!(worker["capabilities"]["os"], "linux");
+    assert_eq!(worker["capabilities"]["runtimes"], json!(["process"]));
+    let default = igloo_core::sandbox::ResourceLimits::default();
+    assert_eq!(worker["allocated"]["sandboxes"], 2);
+    assert_eq!(
+        worker["allocated"]["millicpus"],
+        2 * u64::from(default.millicpus())
+    );
+    assert_eq!(
+        worker["allocated"]["memory_mib"],
+        2 * u64::from(default.memory_mib())
+    );
 }

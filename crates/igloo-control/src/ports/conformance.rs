@@ -441,9 +441,18 @@ impl ForgeConformance {
             .expect("pushing the commit a branch is at changes nothing");
 
         let second = self.origin.commit("second", &[("file", Some("second"))]);
+        self.mirrored(&main, &first).await;
         assert_eq!(
             self.forge.fetch(&self.remote, &main).await.expect("fetch"),
             second
+        );
+        assert_eq!(
+            self.forge
+                .mirrored(self.remote.repo, &main)
+                .await
+                .expect("mirrored"),
+            Some(second.clone()),
+            "a fetch moves the mirrored head"
         );
         let again = self.push(&second, &change, Expected::Absent).await;
         assert!(matches!(again, Err(ForgeError::Moved(_))), "{again:?}");
@@ -473,6 +482,32 @@ impl ForgeConformance {
         self.mirror_operations(&main, &second).await;
         self.bundles().await;
         self.squashes().await;
+    }
+
+    /// `mirrored` reads the mirror as last fetched: not the origin's newer head, nothing for a
+    /// missing branch or a repository never fetched.
+    async fn mirrored(&self, main: &BranchName, fetched: &CommitId) {
+        let repo = self.remote.repo;
+        assert_eq!(
+            self.forge.mirrored(repo, main).await.expect("mirrored"),
+            Some(fetched.clone()),
+            "the origin moved, the mirror did not"
+        );
+        assert_eq!(
+            self.forge
+                .mirrored(repo, &Self::branch("missing"))
+                .await
+                .expect("mirrored"),
+            None
+        );
+        let unfetched = Id::from_uuid(Uuid::from_u128(2));
+        assert_eq!(
+            self.forge
+                .mirrored(unfetched, main)
+                .await
+                .expect("mirrored"),
+            None
+        );
     }
 
     /// A squash is one commit with the head's tree on the base, the same for equal inputs.

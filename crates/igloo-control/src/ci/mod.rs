@@ -22,7 +22,7 @@ pub use self::commands::{
     RecordRunSandboxStopped, RecordWarmBuilding, RecordWarmBuilt, RunQueries, StartRun,
 };
 pub use self::environment::{Environment, Environments};
-pub use self::merge::{MergeError, Merger};
+pub use self::merge::{ChecksState, MergeError, Merger, Readiness};
 pub use self::outcome::{
     AgentWork, CheckResult, Outcome, OutcomeEvent, OutcomeId, OutcomeRecord, Verdict,
 };

@@ -1,8 +1,12 @@
 //! Tasks: one agent on one goal in one sandbox, working in turns.
 
+use std::str::FromStr;
+
 use igloo_core::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+use crate::list::UnknownValue;
 
 /// Creates a task on a repository.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -283,6 +287,22 @@ impl TranscriptResource {
             entries,
             next,
             idle,
+        }
+    }
+}
+
+impl FromStr for TaskPhase {
+    type Err = UnknownValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "preparing" => Ok(Self::Preparing),
+            "working" => Ok(Self::Working),
+            "awaiting_review" => Ok(Self::AwaitingReview),
+            "done" => Ok(Self::Done),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(UnknownValue(other.to_owned())),
         }
     }
 }
