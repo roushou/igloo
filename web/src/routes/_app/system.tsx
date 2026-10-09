@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Placeholder } from "@/components/placeholder";
+import { SystemPage } from "@/components/pages/system-page";
 
 export const Route = createFileRoute("/_app/system")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -10,5 +10,5 @@ export const Route = createFileRoute("/_app/system")({
 
 function Page() {
   const { sandbox } = Route.useSearch();
-  return <Placeholder title="System" detail={sandbox} />;
+  return <SystemPage sandbox={sandbox} />;
 }

@@ -3,35 +3,71 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The console's palette: cool snow greys, one orange for what waits on the user, six statuses. */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.45 0 0);
-  --border: oklch(0.922 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --accent: oklch(0.95 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --ring: oklch(0.708 0 0);
+  --background: #f3f6f8;
+  --card: #ffffff;
+  --muted: #eaeff3;
+  --foreground: #0f1b25;
+  --muted-foreground: #5a6a77;
+  --border: #d8e0e6;
+  --primary: #0f1b25;
+  --primary-foreground: #f3f6f8;
+  --accent: #eaeff3;
+  --accent-foreground: #0f1b25;
+  --destructive: #c62f3a;
+  --ring: #5a6a77;
+
+  --expedition: #d9530b;
+  --expedition-soft: #fdeadf;
+  --expedition-foreground: #ffffff;
+
+  --running: #1d6fd6;
+  --running-soft: #e3effd;
+  --passed: #1f7a46;
+  --passed-soft: #dff3e7;
+  --failed: #c62f3a;
+  --failed-soft: #fbe6e8;
+  --errored: #946000;
+  --errored-soft: #fcefd2;
+  --closed: #5a6a77;
+  --closed-soft: #e6ebef;
+
+  --code: #0b1218;
+  --code-foreground: #d5dee6;
+  --code-muted: #7f90a0;
+  --code-line: #1f2d38;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --border: oklch(1 0 0 / 12%);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --ring: oklch(0.556 0 0);
+    --background: #0a1016;
+    --card: #111a22;
+    --muted: #0d151c;
+    --foreground: #e2e9ef;
+    --muted-foreground: #8b9ba8;
+    --border: #23313c;
+    --primary: #e2e9ef;
+    --primary-foreground: #0a1016;
+    --accent: #1a2631;
+    --accent-foreground: #e2e9ef;
+    --destructive: #ff7b86;
+    --ring: #8b9ba8;
+
+    --expedition: #ff7b33;
+    --expedition-soft: #3a1f10;
+    --expedition-foreground: #0a1016;
+
+    --running: #6aa8ff;
+    --running-soft: #13243d;
+    --passed: #4cc787;
+    --passed-soft: #10291d;
+    --failed: #ff7b86;
+    --failed-soft: #33161a;
+    --errored: #f0b24a;
+    --errored-soft: #33260d;
+    --closed: #8b9ba8;
+    --closed-soft: #1a252e;
   }
 }
 
@@ -48,6 +84,29 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-ring: var(--ring);
+
+  --color-expedition: var(--expedition);
+  --color-expedition-soft: var(--expedition-soft);
+  --color-expedition-foreground: var(--expedition-foreground);
+  --color-running: var(--running);
+  --color-running-soft: var(--running-soft);
+  --color-passed: var(--passed);
+  --color-passed-soft: var(--passed-soft);
+  --color-failed: var(--failed);
+  --color-failed-soft: var(--failed-soft);
+  --color-errored: var(--errored);
+  --color-errored-soft: var(--errored-soft);
+  --color-closed: var(--closed);
+  --color-closed-soft: var(--closed-soft);
+
+  --color-code: var(--code);
+  --color-code-foreground: var(--code-foreground);
+  --color-code-muted: var(--code-muted);
+  --color-code-line: var(--code-line);
+
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @layer base {
@@ -58,6 +117,20 @@
     color-scheme: light dark;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background font-sans text-foreground antialiased;
   }
+  h1,
+  h2 {
+    @apply font-display;
+  }
+  code,
+  kbd,
+  pre {
+    @apply font-mono;
+  }
+}
+
+@utility tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }

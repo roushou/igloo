@@ -1,6 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Placeholder } from "@/components/placeholder";
+import { NowPage } from "@/components/pages/now-page";
 
-export const Route = createFileRoute("/_app/")({
-  component: () => <Placeholder title="Now" />,
-});
+export const Route = createFileRoute("/_app/")({ component: NowPage });

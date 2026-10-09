@@ -12,7 +12,7 @@ const PAGES = [
   { to: "/tasks", label: "Tasks" },
   { to: "/changes", label: "Changes" },
   { to: "/system", label: "System" },
-  { to: "/settings", label: "Settings" },
+  { to: "/settings", label: "Repository" },
 ] as const;
 
 /** The signed-in layout: a left rail with the repository switcher and the pages. */
@@ -22,8 +22,11 @@ export function AppShell() {
     <EventsProvider>
       <SelectedRepoProvider>
         <div className="flex min-h-screen">
-          <nav aria-label="Main" className="flex w-56 shrink-0 flex-col gap-4 border-r p-3">
-            <p className="px-2 text-lg font-semibold">Igloo</p>
+          <nav
+            aria-label="Main"
+            className="sticky top-0 flex h-screen w-56 shrink-0 flex-col gap-4 border-r bg-card p-3"
+          >
+            <p className="px-2 font-display text-xl font-semibold tracking-tight">Igloo</p>
             <RepoSwitcher />
             <ul className="flex flex-col gap-1">
               {PAGES.map((page) => (
@@ -31,7 +34,7 @@ export function AppShell() {
                   <Link
                     to={page.to}
                     activeOptions={{ exact: page.to === "/" }}
-                    className="block rounded-md px-2 py-1.5 text-sm hover:bg-accent data-[status=active]:bg-accent data-[status=active]:font-medium"
+                    className="block rounded-md px-2 py-1.5 text-sm hover:bg-accent data-[status=active]:bg-muted data-[status=active]:font-medium"
                   >
                     {page.label}
                   </Link>
@@ -54,7 +57,7 @@ export function AppShell() {
               Sign out
             </Button>
           </nav>
-          <main className="min-w-0 flex-1 p-6">
+          <main className="min-w-0 flex-1 p-8">
             <Outlet />
           </main>
         </div>

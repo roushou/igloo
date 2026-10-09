@@ -64,7 +64,7 @@ describe("shell", () => {
     stubServer(TOKEN);
     renderApp("/");
     const nav = await screen.findByRole("navigation", { name: "Main" });
-    for (const name of ["Now", "Tasks", "Changes", "System", "Settings"]) {
+    for (const name of ["Now", "Tasks", "Changes", "System", "Repository"]) {
       expect(nav).toHaveTextContent(name);
     }
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));

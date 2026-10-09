@@ -11,7 +11,7 @@ export const REPO = {
   default_branch: "main",
 };
 
-/** The event stream a stubbed server keeps open for the page. */
+/** A server-sent event stream a stubbed server keeps open for the page. */
 export class StubEvents {
   private readonly encoder = new TextEncoder();
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -43,6 +43,11 @@ export class StubEvents {
     );
   }
 
+  /** Sends `text` as is, such as a job's `stdout` event. */
+  raw(text: string): void {
+    this.controller?.enqueue(this.encoder.encode(text));
+  }
+
   /** Ends the current connection as a dropped network would. */
   drop(): void {
     this.controller?.close();
@@ -50,23 +55,54 @@ export class StubEvents {
   }
 }
 
+/** What a stubbed route answers: JSON for a 200, or a `Response` for anything else. */
+export type StubRoute = unknown | ((request: Request, body: unknown) => unknown | Promise<unknown>);
+
+/** A request the stubbed server received. */
+export type StubCall = { method: string; path: string; search: string; body: unknown };
+
 /**
- * Stubs the server: `GET /v1/repos` answers with `repos` for `token` and 401 otherwise, and
- * `GET /v1/events` streams what `events` is given.
+ * Stubs the server: `GET /v1/repos` answers with `repos` for `token` and 401 otherwise,
+ * `GET /v1/events` streams what `events` is given, and `routes` answers the rest by
+ * `"METHOD /path"`. A route is a recorded response body, or a function returning one or a
+ * `Response`. Unknown routes answer 404.
  */
-export function stubServer(token: string, repos: unknown[] = [REPO]) {
+export function stubServer(
+  token: string,
+  repos: unknown[] = [REPO],
+  routes: Record<string, StubRoute> = {},
+) {
   const events = new StubEvents();
+  const calls: StubCall[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const ok = request.headers.get("Authorization") === `Bearer ${token}`;
     if (!ok) return Response.json({ title: "Unauthorized", status: 401 }, { status: 401 });
-    if (new URL(request.url).pathname === "/v1/events") {
+    const url = new URL(request.url);
+    if (url.pathname === "/v1/events") {
       return events.open(request.headers.get("Last-Event-ID"));
     }
-    return Response.json(repos);
+    const text = request.method === "GET" ? "" : await request.clone().text();
+    let body: unknown = text;
+    try {
+      body = text ? JSON.parse(text) : undefined;
+    } catch {
+      // Not JSON: the secret endpoint takes plain text.
+    }
+    calls.push({ method: request.method, path: url.pathname, search: url.search, body });
+    if (request.method === "GET" && url.pathname === "/v1/repos") return Response.json(repos);
+    const route = routes[`${request.method} ${url.pathname}`];
+    if (route === undefined) {
+      return Response.json(
+        { title: "Not found", status: 404, code: "stub.not_found", type: "about:blank" },
+        { status: 404 },
+      );
+    }
+    const answer = typeof route === "function" ? await route(request, body) : route;
+    return answer instanceof Response ? answer : Response.json(answer);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { fetchMock, events };
+  return { fetchMock, events, calls };
 }
 
 /** Renders the real route tree at `path`, with the API's 401 handler wired as in `getRouter`. */

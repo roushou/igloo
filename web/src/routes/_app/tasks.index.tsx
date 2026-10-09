@@ -1,6 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Placeholder } from "@/components/placeholder";
+import { TasksPage } from "@/components/pages/tasks-page";
 
-export const Route = createFileRoute("/_app/tasks/")({
-  component: () => <Placeholder title="Tasks" />,
-});
+export const Route = createFileRoute("/_app/tasks/")({ component: TasksPage });

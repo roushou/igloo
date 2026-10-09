@@ -8,7 +8,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { api } from "@/api/client";
-import { type ConnectionState, EventStream } from "./event-stream";
+import { ActivityLog } from "./activity";
+import { type ConnectionState, type EventNotice, EventStream } from "./event-stream";
 import { staleQueries } from "./queries";
 
 const FLUSH_MS = 50;
@@ -35,7 +36,9 @@ function invalidator(queryClient: QueryClient) {
   };
 }
 
-const Context = createContext<EventStream | null>(null);
+type Events = { stream: EventStream; activity: ActivityLog };
+
+const Context = createContext<Events | null>(null);
 
 /**
  * Holds the tab's one event stream, open while mounted, and refetches the queries each event
@@ -44,26 +47,41 @@ const Context = createContext<EventStream | null>(null);
 export function EventsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [stale] = useState(() => invalidator(queryClient));
-  const [stream] = useState(
-    () =>
-      new EventStream({
-        open: (lastId, signal) => api.events(lastId, signal),
-        onNotice: (notice) => stale.add(staleQueries(notice) as unknown[][]),
-      }),
-  );
+  const [events] = useState<Events>(() => {
+    const activity = new ActivityLog();
+    const stream = new EventStream({
+      open: (lastId, signal) => api.events(lastId, signal),
+      onNotice: (notice) => {
+        activity.add(notice);
+        stale.add(staleQueries(notice) as unknown[][]);
+      },
+    });
+    return { stream, activity };
+  });
   useEffect(() => {
-    stream.start();
+    events.stream.start();
     return () => {
-      stream.stop();
+      events.stream.stop();
       stale.cancel();
     };
-  }, [stream, stale]);
-  return <Context.Provider value={stream}>{children}</Context.Provider>;
+  }, [events, stale]);
+  return <Context.Provider value={events}>{children}</Context.Provider>;
+}
+
+function useEvents(): Events {
+  const events = useContext(Context);
+  if (!events) throw new Error("events hooks need an EventsProvider");
+  return events;
 }
 
 /** Whether the console is receiving events. */
 export function useConnectionState(): ConnectionState {
-  const stream = useContext(Context);
-  if (!stream) throw new Error("useConnectionState needs an EventsProvider");
+  const { stream } = useEvents();
   return useSyncExternalStore(stream.subscribe, stream.getState, stream.getState);
+}
+
+/** The events received since the page opened, newest first. */
+export function useRecentActivity(): readonly EventNotice[] {
+  const { activity } = useEvents();
+  return useSyncExternalStore(activity.subscribe, activity.getSnapshot, activity.getSnapshot);
 }

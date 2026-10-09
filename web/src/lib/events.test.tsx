@@ -29,8 +29,13 @@ describe("staleQueries", () => {
       queryKeys.run("run_1"),
       queryKeys.runs("repo_1"),
       queryKeys.changes("repo_1"),
+      queryKeys.change(),
     ]);
     expect(staleQueries(notice("job", "job_1"))).toEqual([queryKeys.job("job_1")]);
+    expect(staleQueries(notice("sandbox", "sbx_1"))).toEqual([
+      queryKeys.sandbox("sbx_1"),
+      queryKeys.sandboxes(),
+    ]);
     expect(staleQueries(notice("seal", "seal_1"))).toEqual([]);
   });
 
