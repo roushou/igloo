@@ -25,6 +25,7 @@ whether it embeds a worker.
 | `IGLOO_COMMAND_TIMEOUT_SECONDS` | `10`                                 | How long one command may take. 1 to 300.                                        |
 | `IGLOO_LOG_FORMAT`              | `pretty`                             | `pretty` or `json`.                                                             |
 | `IGLOO_EMBEDDED_WORKER`         | `false`                              | Runs an unisolated worker in the server process. Development only.              |
+| `IGLOO_WEB_DIR`                  | unset                                | A built web console (`web/dist/client`, holding `index.html`), served at `/`. Unset, `/` is 404. |
 | `RUST_LOG`                      | `info`                               | Log filter.                                                                     |
 
 `IGLOO_DATA_DIR` defaults to:

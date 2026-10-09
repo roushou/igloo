@@ -10,11 +10,11 @@ use igloo_core::{ValidationErrors, Validator};
 use reqwest::Url;
 
 use crate::adapters::postgres::SecretsKey;
-use crate::inbound::BlobSigningKey;
+use crate::inbound::{BlobSigningKey, WebConsole};
 
 /// Every variable the server reads. Any other `IGLOO_*` variable is an error, except the
 /// worker's and the CLI's.
-const VARIABLES: [&str; 13] = [
+const VARIABLES: [&str; 14] = [
     "IGLOO_DATABASE_URL",
     "IGLOO_DEV_TOKEN",
     "IGLOO_JOIN_TOKEN",
@@ -28,6 +28,7 @@ const VARIABLES: [&str; 13] = [
     "IGLOO_COMMAND_TIMEOUT_SECONDS",
     "IGLOO_LOG_FORMAT",
     "IGLOO_EMBEDDED_WORKER",
+    "IGLOO_WEB_DIR",
 ];
 /// The prefix of the worker's variables.
 const WORKER_PREFIX: &str = "IGLOO_WORKER_";
@@ -89,6 +90,7 @@ pub struct Config {
     pub(crate) lease_ttl: Duration,
     pub(crate) log_format: LogFormat,
     pub(crate) embedded_worker: bool,
+    pub(crate) web_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -134,6 +136,13 @@ impl Config {
             .path("IGLOO_DATA_DIR")
             .or_else(|| Self::user_data_dir(vars.os("HOME"), vars.os("XDG_DATA_HOME")))
             .ok_or("is required when HOME is unset");
+        let web_dir = vars.path("IGLOO_WEB_DIR").map_or(Ok(None), |dir| {
+            if WebConsole::check(&dir) {
+                Ok(Some(dir))
+            } else {
+                Err("must be a directory containing index.html")
+            }
+        });
         let log_format = vars
             .text("IGLOO_LOG_FORMAT")
             .and_then(|format| format.map_or(Ok(LogFormat::default()), |format| format.parse()));
@@ -152,6 +161,7 @@ impl Config {
             lease_ttl,
             log_format,
             embedded_worker,
+            web_dir,
         ) = Validator::new()
             .nested("", vars.unknown(Self::owns))
             .field("IGLOO_LISTEN", vars.address("IGLOO_LISTEN", DEFAULT_LISTEN))
@@ -180,6 +190,7 @@ impl Config {
             )
             .field("IGLOO_LOG_FORMAT", log_format)
             .field("IGLOO_EMBEDDED_WORKER", vars.flag("IGLOO_EMBEDDED_WORKER"))
+            .field("IGLOO_WEB_DIR", web_dir)
             .finish()?;
         Ok(Self {
             listen,
@@ -195,6 +206,7 @@ impl Config {
             lease_ttl,
             log_format,
             embedded_worker,
+            web_dir,
         })
     }
 
@@ -214,6 +226,12 @@ impl Config {
     #[must_use]
     pub const fn public_url(&self) -> Option<&Url> {
         self.public_url.as_ref()
+    }
+
+    /// The built web console served at `/`, when configured. It holds an `index.html`.
+    #[must_use]
+    pub fn web_dir(&self) -> Option<&Path> {
+        self.web_dir.as_deref()
     }
 
     /// Whether a worker runs in the server process.
@@ -477,5 +495,28 @@ mod tests {
         }
         assert_eq!(Config::user_data_dir(None, None), None);
         assert_eq!(Config::user_data_dir(Some(OsStr::new("")), None), None);
+    }
+
+    #[test]
+    fn web_dir_is_optional_and_must_hold_a_console() {
+        assert_eq!(Config::from_vars(required()).expect("valid").web_dir, None);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_str().expect("utf-8");
+        let vars = || {
+            required()
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .chain([("IGLOO_WEB_DIR".to_owned(), path.to_owned())])
+        };
+        let errors = Config::from_vars(vars()).expect_err("no index");
+        assert_eq!(
+            errors.fields().map(|(field, _)| field).collect::<Vec<_>>(),
+            ["IGLOO_WEB_DIR"]
+        );
+
+        std::fs::write(dir.path().join("index.html"), "<html/>").expect("index");
+        let config = Config::from_vars(vars()).expect("valid");
+        assert_eq!(config.web_dir.as_deref(), Some(dir.path()));
     }
 }

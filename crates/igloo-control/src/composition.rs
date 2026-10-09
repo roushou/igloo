@@ -32,6 +32,7 @@ use crate::app::{
 use crate::ci::{CiModule, Outcome, Run};
 use crate::config::Config;
 use crate::inbound::BlobUrls;
+use crate::inbound::WebConsole;
 use crate::inbound::gateway::Gateway;
 use crate::inbound::mcp::Mcp;
 use crate::inbound::rest::{DevToken, RestApi};
@@ -165,7 +166,11 @@ impl Server {
             DevToken::new(config.dev_token.clone(), actor),
             blob_urls,
         )?;
-        let http = Mcp::router(&rest).merge(rest.router());
+        let api = Mcp::router(&rest).merge(rest.router());
+        let http = match &config.web_dir {
+            Some(dir) => WebConsole::new(dir).mount(api),
+            None => api,
+        };
         let _bus = builder.build().start(&supervisor);
 
         let server = Self {

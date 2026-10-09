@@ -29,6 +29,7 @@ async fn main() -> eyre::Result<()> {
         data_dir = %config.data_dir().display(),
         public_url = config.public_url().map(tracing::field::display),
         embedded_worker = config.embedded_worker(),
+        web_dir = config.web_dir().map(|dir| dir.display().to_string()),
         "igloo-control is serving"
     );
     let mut terminate = signal(SignalKind::terminate()).wrap_err("listening for SIGTERM")?;
