@@ -127,8 +127,8 @@ impl Mcp {
         name = "task.create",
         description = "Creates a task: an agent works toward the goal in its own sandbox, from \
                        the head of the repository's default branch, and its commits become a \
-                       change whose checks run. Returns the task; follow it with task.get and \
-                       task.transcript."
+                       change whose checks run; the goal's first line titles that change. \
+                       Returns the task; follow it with task.get and task.transcript."
     )]
     async fn task_create(
         &self,

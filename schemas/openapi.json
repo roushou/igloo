@@ -2581,7 +2581,7 @@
         "properties": {
           "goal": {
             "type": "string",
-            "description": "What the agent is asked to do; not empty."
+            "description": "What the agent is asked to do; not empty. Its first line titles the task's change."
           },
           "tool": {
             "type": [

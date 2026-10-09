@@ -20,6 +20,12 @@ pub trait Harness: Send + Sync {
 
     /// The transcript entries of one line of the tool's standard output.
     fn read(&self, line: &str) -> Vec<Entry>;
+
+    /// Whether one line of the tool's output says it stopped on its account's usage limit,
+    /// so the turn can be asked again once the limit resets.
+    fn limited(&self, _line: &str) -> bool {
+        false
+    }
 }
 
 /// The process of one turn: a shell script with the prompt in `IGLOO_PROMPT`, so prompts never
@@ -85,6 +91,13 @@ impl Harness for ClaudeCode {
             TurnCommand::PROMPT
         );
         TurnCommand::new(script, prompt)
+    }
+
+    fn limited(&self, line: &str) -> bool {
+        let line = line.to_ascii_lowercase();
+        ["session limit", "usage limit", "weekly limit"]
+            .iter()
+            .any(|limit| line.contains(&format!("hit your {limit}")))
     }
 
     fn read(&self, line: &str) -> Vec<Entry> {
@@ -214,6 +227,19 @@ mod tests {
             turn.env.iter().find(|(key, _)| *key == "IGLOO_PROMPT"),
             Some(("IGLOO_PROMPT", "it's \"quoted\""))
         );
+    }
+
+    #[test]
+    fn claude_code_reports_its_usage_limit() {
+        assert!(ClaudeCode.limited(
+            r#"{"type":"result","is_error":true,"result":"You've hit your session limit · resets 8am (UTC)"}"#
+        ));
+        assert!(ClaudeCode.limited("You've hit your usage limit"));
+        assert!(
+            !ClaudeCode
+                .limited(r#"{"type":"result","is_error":true,"result":"Reached max turns"}"#)
+        );
+        assert!(!CommandHarness.limited("You've hit your session limit"));
     }
 
     #[test]

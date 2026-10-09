@@ -483,6 +483,55 @@ impl ForgeConformance {
         self.bundles().await;
         self.squashes().await;
         self.diffs().await;
+        self.deletes().await;
+    }
+
+    /// A branch is deleted only while it is where the caller saw it; deleting it again succeeds.
+    async fn deletes(&self) {
+        let head = self
+            .forge
+            .fetch(&self.remote, &Self::branch("main"))
+            .await
+            .expect("fetch");
+        let done = Self::branch("igloo/done");
+        self.push(&head, &done, Expected::Absent)
+            .await
+            .expect("create");
+        self.forge
+            .delete(&self.remote, &done, &head)
+            .await
+            .expect("delete");
+        assert!(
+            matches!(
+                self.forge.fetch(&self.remote, &done).await,
+                Err(ForgeError::BranchNotFound(_))
+            ),
+            "the branch is gone"
+        );
+        self.forge
+            .delete(&self.remote, &done, &head)
+            .await
+            .expect("deleting a deleted branch succeeds");
+
+        let moved = Self::branch("igloo/moved");
+        self.push(&head, &moved, Expected::Absent)
+            .await
+            .expect("create");
+        let elsewhere = self.origin.commit("elsewhere", &[("elsewhere", Some("1"))]);
+        self.forge
+            .fetch(&self.remote, &Self::branch("main"))
+            .await
+            .expect("fetch");
+        self.push(&elsewhere, &moved, Expected::Any)
+            .await
+            .expect("move");
+        let refused = self.forge.delete(&self.remote, &moved, &head).await;
+        assert!(matches!(refused, Err(ForgeError::Moved(_))), "{refused:?}");
+        assert_eq!(
+            self.origin.head("igloo/moved"),
+            elsewhere,
+            "a moved branch stays"
+        );
     }
 
     /// `mirrored` reads the mirror as last fetched: not the origin's newer head, nothing for a

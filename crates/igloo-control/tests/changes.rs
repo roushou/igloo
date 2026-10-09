@@ -106,6 +106,24 @@ async fn changes_are_checked_merged_and_their_outcomes_recorded() {
     let shown = serde_json::to_string(&merged).expect("json");
     assert!(!shown.contains(SECRET));
 
+    // The merged change's source branch is deleted from the forge.
+    let mut deleted = false;
+    for _ in 0..100 {
+        let exists = std::process::Command::new("git")
+            .args(["-C", &origin.path, "rev-parse", "--verify", "--quiet"])
+            .arg("refs/heads/feature")
+            .output()
+            .expect("git")
+            .status
+            .success();
+        if !exists {
+            deleted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(deleted, "the merged change's branch is deleted");
+
     // 4. The merge records its outcome.
     let outcome = recorded(&end_to_end, "igloo.outcome.recorded").await;
     let record = &outcome["record"];

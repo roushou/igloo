@@ -12,7 +12,7 @@ use crate::list::UnknownValue;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[non_exhaustive]
 pub struct CreateTaskRequest {
-    /// What the agent is asked to do; not empty.
+    /// What the agent is asked to do; not empty. Its first line titles the task's change.
     pub goal: String,
     /// A tool of the repository's `.igloo/agents.toml`; its default tool when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

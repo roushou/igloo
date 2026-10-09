@@ -364,6 +364,32 @@ impl Repository {
         Err(rejection.map_or_else(|| output.into_error(), GitError::Rejected))
     }
 
+    /// Deletes `branch` at `to`, provided it is at `at`. A branch elsewhere, or already
+    /// gone, is refused as [`PushRejection::Stale`].
+    pub async fn delete_branch(
+        &self,
+        to: &Endpoint,
+        branch: &BranchName,
+        at: &CommitId,
+    ) -> Result<(), GitError> {
+        let target = RefName::from(branch);
+        let push = self
+            .invoke("push")
+            .arg("--porcelain")
+            .arg(format!("--force-with-lease={target}:{at}"));
+        let output = Self::endpoint(push, to)
+            .arg(format!(":{target}"))
+            .output()
+            .await?;
+        if output.status == Some(0) {
+            return Ok(());
+        }
+        let rejection = std::str::from_utf8(&output.stdout)
+            .ok()
+            .and_then(PushRejection::from_porcelain);
+        Err(rejection.map_or_else(|| output.into_error(), GitError::Rejected))
+    }
+
     /// Checks that the bundle at `bundle` is valid and its prerequisites are present.
     pub async fn verify_bundle(&self, bundle: &Path) -> Result<(), GitError> {
         self.invoke("bundle")

@@ -300,7 +300,7 @@ impl Agent {
             .into_iter()
             .chain([
                 (CommitBundle::BASE.to_owned(), prepared.commit.to_string()),
-                (CommitBundle::MESSAGE.to_owned(), Self::title(task)),
+                (CommitBundle::MESSAGE.to_owned(), task.title()),
                 (CommitBundle::TASK.to_owned(), task.id().to_string()),
             ])
             .collect::<BTreeMap<_, _>>();
@@ -363,7 +363,7 @@ impl Agent {
                 self.dispatch(OpenChange {
                     repo: repo.id(),
                     source: branch,
-                    title: Self::title(task),
+                    title: task.title(),
                     heads,
                 })
                 .await?
@@ -399,12 +399,6 @@ impl Agent {
                 }
             }
         }
-    }
-
-    /// The task's change title: the goal's first line, at most 200 characters.
-    fn title(task: &Task) -> String {
-        let line = task.goal().lines().next().unwrap_or_default().trim();
-        line.chars().take(200).collect()
     }
 
     fn sandbox_spec(

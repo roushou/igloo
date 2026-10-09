@@ -84,6 +84,8 @@ pub struct RecordTurnEnded {
     pub job: JobId,
     /// How it ended.
     pub ending: JobEnding,
+    /// Whether the tool stopped on its account's usage limit.
+    pub limited: bool,
 }
 
 /// Records the job collecting the last turn's commits.

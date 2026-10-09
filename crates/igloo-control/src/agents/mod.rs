@@ -69,6 +69,7 @@ impl Extension for AgentsModule {
         let tasks = TaskQueries::new(store);
         platform.reactor(RecordTurns {
             tasks: tasks.clone(),
+            logs: Arc::clone(&ports.logs),
         });
         platform.reactor(FollowReviews {
             tasks: tasks.clone(),
@@ -160,8 +161,12 @@ impl AgentsModule {
             Arc::clone(store),
             Arc::clone(clock),
             |command: &RecordTurnEnded| command.task,
-            |task: &mut Task, command: &RecordTurnEnded, _| {
-                task.job_ended(command.job, command.ending);
+            |task: &mut Task, command: &RecordTurnEnded, now| {
+                if command.limited {
+                    task.turn_limited(command.job, command.ending, now);
+                } else {
+                    task.job_ended(command.job, command.ending);
+                }
             },
         ))?;
         platform.command(EntityHandler::new(

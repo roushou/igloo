@@ -7,6 +7,7 @@ use igloo_core::snapshot::SnapshotId;
 use igloo_core::{
     Entity, ErrorCode, Event, Generation, Id, Labels, Plan, Prefixed, Resource, Timestamp,
 };
+use jiff::SignedDuration;
 use serde::{Deserialize, Serialize};
 
 use super::{ToolName, ToolSpec};
@@ -32,6 +33,8 @@ pub struct Task {
     stopped: bool,
     released: bool,
     turns: Vec<Turn>,
+    limited: u32,
+    retry_at: Option<Timestamp>,
     requested: Option<String>,
     change: Option<ChangeId>,
     end: Option<TaskEnd>,
@@ -223,6 +226,16 @@ pub enum TaskEvent {
     SandboxStopped,
     /// The sandbox a failed collection kept may be stopped.
     SandboxReleased,
+    /// A turn stopped on its tool's usage limit. It is dropped and its prompt asked again at
+    /// `retry_at`.
+    TurnLimited {
+        /// The turn's job.
+        job: JobId,
+        /// How it ended.
+        ending: JobEnding,
+        /// When the prompt is asked again.
+        retry_at: Timestamp,
+    },
 }
 
 /// Why a task change is rejected.
@@ -248,6 +261,13 @@ impl ErrorCode for TaskError {
 impl Task {
     /// How many collecting jobs of one turn may fail before the task fails.
     pub const COLLECT_ATTEMPTS: u32 = 3;
+    /// How long a turn stopped by its tool's usage limit waits before it is asked again.
+    pub const LIMIT_RETRY: SignedDuration = SignedDuration::from_mins(30);
+    /// How many times a task's turns may stop on the usage limit before the task fails: six
+    /// hours of retries, longer than a usage window.
+    pub const LIMIT_ATTEMPTS: u32 = 12;
+    /// The most characters a change title taken from a goal has.
+    pub const TITLE_CHARS: usize = 72;
 
     /// A task on `repo` working toward `goal` with `tool`, or the repository's default tool.
     pub fn new(
@@ -434,6 +454,50 @@ impl Task {
         Ok(())
     }
 
+    /// Records that turn `job` stopped on its tool's usage limit at `now`: the turn is dropped
+    /// and its prompt asked again after [`Task::LIMIT_RETRY`], and the sandbox keeps the
+    /// tool's work. After [`Task::LIMIT_ATTEMPTS`] such stops the task fails. Other jobs, and a
+    /// turn already ended, change nothing.
+    pub fn turn_limited(&mut self, job: JobId, ending: JobEnding, now: Timestamp) {
+        let current = self
+            .turns
+            .last()
+            .is_some_and(|turn| turn.job == job && turn.ending.is_none());
+        if self.end.is_some() || !current {
+            return;
+        }
+        if self.limited + 1 >= Self::LIMIT_ATTEMPTS {
+            self.record(TaskEvent::TurnEnded { job, ending });
+            self.end_with(TaskEnd::Failed {
+                reason: format!(
+                    "the tool's usage limit stopped its turns {} times",
+                    Self::LIMIT_ATTEMPTS
+                ),
+            });
+            return;
+        }
+        self.record(TaskEvent::TurnLimited {
+            job,
+            ending,
+            retry_at: now.saturating_add(Self::LIMIT_RETRY),
+        });
+    }
+
+    /// The title of the task's change: the goal's first line, cut at a word to at most
+    /// [`Task::TITLE_CHARS`] characters, an ellipsis marking the cut.
+    #[must_use]
+    pub fn title(&self) -> String {
+        let line = self.goal.lines().next().unwrap_or_default().trim();
+        if line.chars().count() <= Self::TITLE_CHARS {
+            return line.to_owned();
+        }
+        let head: String = line.chars().take(Self::TITLE_CHARS - 1).collect();
+        let cut = head
+            .rfind(char::is_whitespace)
+            .map_or(head.as_str(), |end| head[..end].trim_end());
+        format!("{cut}…")
+    }
+
     /// Cancels the task, unless it ended. Cancelling a task that failed collecting its
     /// commits releases the sandbox it kept.
     pub fn cancel(&mut self) {
@@ -596,6 +660,8 @@ impl Task {
             stopped: false,
             released: false,
             turns: Vec::new(),
+            limited: 0,
+            retry_at: None,
             requested: None,
             change: None,
             end: None,
@@ -634,6 +700,7 @@ impl Event for TaskEvent {
             Self::Ended { .. } => "igloo.task.ended",
             Self::SandboxStopped => "igloo.task.sandbox_stopped",
             Self::SandboxReleased => "igloo.task.sandbox_released",
+            Self::TurnLimited { .. } => "igloo.task.turn_limited",
         }
     }
 }
@@ -716,6 +783,22 @@ impl Entity for Task {
             TaskEvent::Ended { end } => self.end = Some(end.clone()),
             TaskEvent::SandboxStopped => self.stopped = true,
             TaskEvent::SandboxReleased => self.released = true,
+            TaskEvent::TurnLimited { job, retry_at, .. } => {
+                if self.turns.last().is_some_and(|turn| turn.job == *job)
+                    && let Some(turn) = self.turns.pop()
+                {
+                    // A turn after the first answers what was requested; ask it again, with
+                    // whatever was requested since.
+                    if !self.turns.is_empty() {
+                        self.requested = Some(match self.requested.take() {
+                            Some(pending) => format!("{}\n\n{pending}", turn.prompt),
+                            None => turn.prompt,
+                        });
+                    }
+                }
+                self.limited += 1;
+                self.retry_at = Some(*retry_at);
+            }
         }
     }
 
@@ -751,7 +834,7 @@ impl Resource for Task {
 
     /// One step at a time; steps waiting on a build or a turn resume when its outcome is
     /// recorded. An ended task stops its sandbox, unless it keeps it for recovery.
-    fn plan(&self, _now: Timestamp) -> Plan<TaskAction> {
+    fn plan(&self, now: Timestamp) -> Plan<TaskAction> {
         if self.keeps_sandbox() {
             return Plan::Converged;
         }
@@ -767,6 +850,13 @@ impl Resource for Task {
             (Setup::Ready(snapshot), None) => Plan::Act(vec![TaskAction::StartSandbox(snapshot)]),
             (Setup::Ready(_), Some(_)) => {
                 if let Some(prompt) = self.next_prompt() {
+                    if let Some(retry_at) = self.retry_at
+                        && retry_at > now
+                    {
+                        return Plan::Recheck {
+                            after: retry_at.duration_since(now),
+                        };
+                    }
                     return Plan::Act(vec![TaskAction::StartTurn(prompt)]);
                 }
                 match self.turns.last() {
@@ -1089,6 +1179,109 @@ mod tests {
                 },
             ]);
         failed.plan().then_converged();
+    }
+
+    #[test]
+    fn the_change_title_is_the_goals_first_line_cut_at_a_word() {
+        let task =
+            |goal: &str| Task::new(id(1), id(2), goal.to_owned(), None, S::NOW).expect("task");
+        assert_eq!(
+            task("feat: diffs (P5.5)\n\nDetails").title(),
+            "feat: diffs (P5.5)"
+        );
+        let long = task(&"word ".repeat(30)).title();
+        assert!(long.chars().count() <= Task::TITLE_CHARS, "{long}");
+        assert!(long.ends_with("word…"), "{long}");
+    }
+
+    #[test]
+    fn a_turn_stopped_by_the_usage_limit_is_asked_again_later() {
+        let limited = S::given(working(10))
+            .when(|task, now| task.turn_limited(id(20), exited(1), now))
+            .then([TaskEvent::TurnLimited {
+                job: id(20),
+                ending: exited(1),
+                retry_at: S::NOW.saturating_add(Task::LIMIT_RETRY),
+            }]);
+        limited.plan().then_recheck(Task::LIMIT_RETRY);
+        limited
+            .after(Task::LIMIT_RETRY)
+            .plan()
+            .then_actions([TaskAction::StartTurn("Fix the bug".to_owned())]);
+    }
+
+    #[test]
+    fn a_later_turn_stopped_by_the_usage_limit_keeps_its_prompt() {
+        let mut events = working(10);
+        events.extend([
+            TaskEvent::TurnEnded {
+                job: id(20),
+                ending: exited(0),
+            },
+            TaskEvent::CommitsCollecting { job: id(30) },
+            TaskEvent::CommitsCollected {
+                job: id(30),
+                ending: exited(0),
+            },
+            TaskEvent::Revised {
+                change: id(40),
+                revision: 1,
+            },
+            TaskEvent::TurnRequested {
+                prompt: "Handle the empty case".to_owned(),
+            },
+            TaskEvent::TurnStarted {
+                job: id(21),
+                prompt: "Handle the empty case".to_owned(),
+            },
+        ]);
+        S::given(events)
+            .when(|task, now| task.turn_limited(id(21), exited(1), now))
+            .then([TaskEvent::TurnLimited {
+                job: id(21),
+                ending: exited(1),
+                retry_at: S::NOW.saturating_add(Task::LIMIT_RETRY),
+            }])
+            .after(Task::LIMIT_RETRY)
+            .plan()
+            .then_actions([TaskAction::StartTurn("Handle the empty case".to_owned())]);
+    }
+
+    #[test]
+    fn a_task_whose_turns_keep_hitting_the_usage_limit_fails() {
+        let mut events = working(10);
+        for n in 0..Task::LIMIT_ATTEMPTS - 1 {
+            let job = id(u128::from(20 + n));
+            if n > 0 {
+                events.push(TaskEvent::TurnStarted {
+                    job,
+                    prompt: "Fix the bug".to_owned(),
+                });
+            }
+            events.push(TaskEvent::TurnLimited {
+                job,
+                ending: exited(1),
+                retry_at: S::NOW,
+            });
+        }
+        let last = id(u128::from(20 + Task::LIMIT_ATTEMPTS - 1));
+        events.push(TaskEvent::TurnStarted {
+            job: last,
+            prompt: "Fix the bug".to_owned(),
+        });
+        S::given(events)
+            .when(|task, now| task.turn_limited(last, exited(1), now))
+            .then([
+                TaskEvent::TurnEnded {
+                    job: last,
+                    ending: exited(1),
+                },
+                TaskEvent::Ended {
+                    end: TaskEnd::Failed {
+                        reason: "the tool's usage limit stopped its turns 12 times".to_owned(),
+                    },
+                },
+            ]);
     }
 
     #[test]

@@ -184,6 +184,31 @@ impl Forge for GitForge {
             .ok_or_else(|| ForgeError::BranchNotFound(branch.clone()))
     }
 
+    async fn delete(
+        &self,
+        remote: &Remote,
+        branch: &BranchName,
+        at: &CommitId,
+    ) -> Result<(), ForgeError> {
+        let lock = self.lock(remote.repo);
+        let _guard = lock.lock().await;
+        let mirror = self.ensure_mirror(remote).await?;
+        let endpoint = Self::endpoint(remote);
+        match mirror.delete_branch(&endpoint, branch, at).await {
+            Ok(()) => Ok(()),
+            // Git words "already gone" and "moved" alike; the forge's branch tells them apart.
+            Err(GitError::Rejected(PushRejection::Stale)) => {
+                let refspec = Refspec::new(branch).to(branch).forced();
+                match mirror.fetch(&endpoint, &[refspec], None).await {
+                    Err(GitError::RemoteRefNotFound) => Ok(()),
+                    Ok(()) => Err(ForgeError::Moved(branch.clone())),
+                    Err(error) => Err(error.into()),
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn mirrored(
         &self,
         repo: RepoId,

@@ -827,7 +827,7 @@ export interface components {
         };
         /** @description Creates a task on a repository. */
         CreateTaskRequest: {
-            /** @description What the agent is asked to do; not empty. */
+            /** @description What the agent is asked to do; not empty. Its first line titles the task's change. */
             goal: string;
             /** @description A tool of the repository's `.igloo/agents.toml`; its default tool when absent. */
             tool?: string | null;

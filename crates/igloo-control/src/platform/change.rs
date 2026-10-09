@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use igloo_core::change::{Change, ChangeError, ChangeId, ChangePhase, Comment};
+use igloo_core::change::{Change, ChangeError, ChangeEvent, ChangeId, ChangePhase, Comment};
 use igloo_core::repo::{BranchName, CommitId, Repo, RepoId};
 use igloo_core::{Actor, Entity, ErrorCode, Timestamp};
+use tracing::info;
 
 use super::RepoQueries;
 use crate::app::{
-    AppError, Command, CommandHandler, EntityHandler, Extension, InstallError, PlatformBuilder,
-    RequestContext,
+    AppError, Command, CommandBus, CommandHandler, EntityHandler, Extension, InstallError,
+    PlatformBuilder, Reactor, RequestContext,
 };
 use crate::ports::{
-    Clock, EntityStore, Forge, IdGenerator, IdGeneratorExt, StorageError, Versioned,
+    Clock, EntityStore, EventEnvelope, Forge, ForgeError, IdGenerator, IdGeneratorExt,
+    StorageError, Versioned,
 };
 
 /// Opens a change proposing `source`, whose head and fork point were just fetched.
@@ -373,10 +375,69 @@ impl Extension for ChangeModule {
             },
         ))?;
         platform.command(EntityHandler::new(
-            store,
+            Arc::clone(&store),
             Arc::clone(&ports.clock),
             |command: &CloseChange| command.change,
             |change: &mut Change, _: &CloseChange, _| -> Result<(), ChangeError> { change.close() },
-        ))
+        ))?;
+        platform.reactor(DeleteEndedBranches {
+            changes: ChangeQueries::new(store),
+            repos: RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
+            forge: Arc::clone(&ports.forge),
+        });
+        Ok(())
+    }
+}
+
+/// Deletes the source branch of a change once it merged or closed, provided the branch is
+/// still at the change's latest revision. The target branch and the repository's default
+/// branch are never deleted, and a branch moved since is left as it is.
+pub(crate) struct DeleteEndedBranches {
+    changes: ChangeQueries,
+    repos: RepoQueries,
+    forge: Arc<dyn Forge>,
+}
+
+#[async_trait]
+impl Reactor for DeleteEndedBranches {
+    fn name(&self) -> &'static str {
+        "platform.delete_ended_branches"
+    }
+
+    async fn react(&self, event: &EventEnvelope, _: &CommandBus) -> Result<(), AppError> {
+        let Some(id) = event.subject_as::<Change>() else {
+            return Ok(());
+        };
+        match event.decode::<ChangeEvent>()? {
+            ChangeEvent::Merged { .. } | ChangeEvent::Closed => {}
+            ChangeEvent::Opened { .. }
+            | ChangeEvent::Revised { .. }
+            | ChangeEvent::Approved { .. }
+            | ChangeEvent::Commented { .. }
+            | ChangeEvent::ChangesRequested { .. } => return Ok(()),
+        }
+        let Some(change) = self.changes.get(id).await? else {
+            return Ok(());
+        };
+        let Some(repo) = self.repos.get(change.repo()).await? else {
+            return Ok(());
+        };
+        let source = change.source();
+        if source == change.target() || source == repo.default_branch() {
+            return Ok(());
+        }
+        let remote = self.repos.remote(&repo).await?;
+        match self
+            .forge
+            .delete(&remote, source, &change.latest().head)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(ForgeError::Moved(_)) => {
+                info!(change = %id, branch = %source, "kept a branch that moved after its change ended");
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 }

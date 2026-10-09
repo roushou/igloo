@@ -32,6 +32,15 @@ pub trait Forge: Send + Sync {
         expected: Expected,
     ) -> Result<(), ForgeError>;
 
+    /// Deletes `branch` on the forge, provided it is at `at`. A branch already gone counts as
+    /// deleted; one at another commit is left as it is and reported as moved.
+    async fn delete(
+        &self,
+        remote: &Remote,
+        branch: &BranchName,
+        at: &CommitId,
+    ) -> Result<(), ForgeError>;
+
     /// Fetches the commits of the git bundle at `bundle` into `repo`'s mirror; returns the
     /// bundle's `HEAD`. The bundle's prerequisite commits must be in the mirror.
     async fn import(&self, repo: RepoId, bundle: &Path) -> Result<CommitId, ForgeError>;

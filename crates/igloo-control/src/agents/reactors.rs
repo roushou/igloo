@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use igloo_core::build::{Build, BuildEvent, BuildOutcome};
 use igloo_core::change::{Change, ChangeEvent};
-use igloo_core::job::{Job, JobEvent};
+use igloo_core::job::{Job, JobEvent, JobId};
+use igloo_core::process::OutputStream;
 use igloo_core::{Actor, Entity, SystemComponent};
 
 use super::commands::{
@@ -11,11 +14,53 @@ use super::task::{Task, TaskEvent};
 use crate::app::{AppError, CommandBus, Reactor, RequestContext};
 use crate::ci::{AgentWork, AttributeOutcome, Outcome, OutcomeEvent};
 use crate::platform::BuildQueries;
-use crate::ports::EventEnvelope;
+use crate::ports::{EventEnvelope, LogStore};
 
-/// Records how the turns of tasks ended.
+/// Records how the turns of tasks ended, telling a turn its tool's usage limit stopped from
+/// one that failed.
 pub(super) struct RecordTurns {
     pub(super) tasks: TaskQueries,
+    pub(super) logs: Arc<dyn LogStore>,
+}
+
+impl RecordTurns {
+    const PAGE: usize = 1024;
+
+    /// Whether `task`'s turn `job`, which did not succeed, stopped on its tool's usage limit,
+    /// as the tool's harness reads the job's output.
+    async fn limited(&self, task: &Task, job: JobId) -> Result<bool, AppError> {
+        let Some(prepared) = task.settings() else {
+            return Ok(false);
+        };
+        if task.turns().last().is_none_or(|turn| turn.job != job) {
+            return Ok(false);
+        }
+        let harness = prepared.spec.harness.harness();
+        let mut after = 0;
+        let mut line = Vec::new();
+        loop {
+            let page = self.logs.read(job, after, Self::PAGE).await?;
+            let Some(last) = page.last() else {
+                return Ok(harness.limited(&String::from_utf8_lossy(&line)));
+            };
+            after = last.sequence;
+            for entry in page
+                .iter()
+                .filter(|entry| entry.stream == OutputStream::Stdout)
+            {
+                for byte in &entry.data {
+                    if *byte == b'\n' {
+                        if harness.limited(&String::from_utf8_lossy(&line)) {
+                            return Ok(true);
+                        }
+                        line.clear();
+                    } else {
+                        line.push(*byte);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Records how the builds tasks wait on ended, whichever of the build's end and the task's
@@ -123,10 +168,12 @@ impl Reactor for RecordTurns {
         let Some(task) = self.tasks.with_job(job).await? else {
             return Ok(());
         };
+        let limited = !ending.succeeded() && self.limited(&task, job).await?;
         let command = RecordTurnEnded {
             task: task.id(),
             job,
             ending,
+            limited,
         };
         bus.dispatch(command, context(event)).await
     }
