@@ -38,8 +38,13 @@ install_packages() {
 }
 
 ensure_bun() {
+  local want
+  want=$(sed -n 's/.*"packageManager": "bun@\([^"]*\)".*/\1/p' "$repo/web/package.json")
+  [[ -n $want ]] || { echo "web/package.json has no packageManager bun@<version>" >&2; exit 1; }
   export PATH="$HOME/.bun/bin:$PATH"
-  command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash
+  if [[ $(bun --version 2>/dev/null || true) != "$want" ]]; then
+    curl -fsSL https://bun.sh/install | bash -s "bun-v$want"
+  fi
 }
 
 install_web() {
