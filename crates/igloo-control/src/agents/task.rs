@@ -30,6 +30,7 @@ pub struct Task {
     setup: Setup,
     sandbox: Option<SandboxId>,
     stopped: bool,
+    released: bool,
     turns: Vec<Turn>,
     requested: Option<String>,
     change: Option<ChangeId>,
@@ -69,6 +70,10 @@ pub struct Turn {
     pub bundle: Option<JobId>,
     /// Whether that job succeeded, once it ended.
     pub bundled: bool,
+    /// How many collecting jobs failed; a failed one is retried until
+    /// [`Task::COLLECT_ATTEMPTS`] have failed.
+    #[serde(default)]
+    pub collect_failures: u32,
     /// The revision of the task's change its commits became.
     pub revision: Option<u32>,
 }
@@ -216,6 +221,8 @@ pub enum TaskEvent {
     },
     /// The sandbox was stopped.
     SandboxStopped,
+    /// The sandbox a failed collection kept may be stopped.
+    SandboxReleased,
 }
 
 /// Why a task change is rejected.
@@ -239,6 +246,9 @@ impl ErrorCode for TaskError {
 }
 
 impl Task {
+    /// How many collecting jobs of one turn may fail before the task fails.
+    pub const COLLECT_ATTEMPTS: u32 = 3;
+
     /// A task on `repo` working toward `goal` with `tool`, or the repository's default tool.
     pub fn new(
         id: TaskId,
@@ -378,7 +388,9 @@ impl Task {
     }
 
     /// Records how a job ended; only the last turn's job and its collecting job count, once
-    /// each. Either not exiting 0 fails the task.
+    /// each. A failed turn fails the task. A failed collection is retried; once
+    /// [`Task::COLLECT_ATTEMPTS`] have failed, the task fails and keeps its sandbox, so the
+    /// turn's commits stay recoverable, until it is cancelled.
     pub fn job_ended(&mut self, job: JobId, ending: JobEnding) {
         let Some(turn) = self.turns.last() else {
             return;
@@ -396,9 +408,13 @@ impl Task {
             }
         } else if turn.bundle == Some(job) && !turn.bundled {
             self.record(TaskEvent::CommitsCollected { job, ending });
-            if !ending.succeeded() {
+            let failures = self.turns.last().map_or(0, |turn| turn.collect_failures);
+            if failures >= Self::COLLECT_ATTEMPTS {
                 self.end_with(TaskEnd::Failed {
-                    reason: format!("collecting the commits of turn {number} {ending}"),
+                    reason: format!(
+                        "collecting the commits of turn {number} {ending}, {failures} times; \
+                         the sandbox is kept for recovery until the task is cancelled"
+                    ),
                 });
             }
         }
@@ -418,11 +434,26 @@ impl Task {
         Ok(())
     }
 
-    /// Cancels the task, unless it ended.
+    /// Cancels the task, unless it ended. Cancelling a task that failed collecting its
+    /// commits releases the sandbox it kept.
     pub fn cancel(&mut self) {
         if self.end.is_none() {
             self.end_with(TaskEnd::Cancelled);
+        } else if self.keeps_sandbox() {
+            self.record(TaskEvent::SandboxReleased);
         }
+    }
+
+    /// Whether the task ended keeping its sandbox: its last collection failed every attempt
+    /// and nobody released the sandbox yet.
+    #[must_use]
+    pub fn keeps_sandbox(&self) -> bool {
+        matches!(self.end, Some(TaskEnd::Failed { .. }))
+            && !self.released
+            && self
+                .turns
+                .last()
+                .is_some_and(|turn| turn.collect_failures >= Self::COLLECT_ATTEMPTS)
     }
 
     /// Fails the task, unless it ended.
@@ -563,6 +594,7 @@ impl Task {
             setup: Setup::Pending,
             sandbox: None,
             stopped: false,
+            released: false,
             turns: Vec::new(),
             requested: None,
             change: None,
@@ -601,6 +633,7 @@ impl Event for TaskEvent {
             Self::Revised { .. } => "igloo.task.revised",
             Self::Ended { .. } => "igloo.task.ended",
             Self::SandboxStopped => "igloo.task.sandbox_stopped",
+            Self::SandboxReleased => "igloo.task.sandbox_released",
         }
     }
 }
@@ -650,6 +683,7 @@ impl Entity for Task {
                     ending: None,
                     bundle: None,
                     bundled: false,
+                    collect_failures: 0,
                     revision: None,
                 });
             }
@@ -665,7 +699,12 @@ impl Entity for Task {
             }
             TaskEvent::CommitsCollected { ending, .. } => {
                 if let Some(turn) = self.turns.last_mut() {
-                    turn.bundled = ending.succeeded();
+                    if ending.succeeded() {
+                        turn.bundled = true;
+                    } else {
+                        turn.bundle = None;
+                        turn.collect_failures += 1;
+                    }
                 }
             }
             TaskEvent::Revised { change, revision } => {
@@ -676,6 +715,7 @@ impl Entity for Task {
             }
             TaskEvent::Ended { end } => self.end = Some(end.clone()),
             TaskEvent::SandboxStopped => self.stopped = true,
+            TaskEvent::SandboxReleased => self.released = true,
         }
     }
 
@@ -710,8 +750,11 @@ impl Resource for Task {
     }
 
     /// One step at a time; steps waiting on a build or a turn resume when its outcome is
-    /// recorded. An ended task stops its sandbox.
+    /// recorded. An ended task stops its sandbox, unless it keeps it for recovery.
     fn plan(&self, _now: Timestamp) -> Plan<TaskAction> {
+        if self.keeps_sandbox() {
+            return Plan::Converged;
+        }
         if self.end.is_some() {
             return match self.sandbox {
                 Some(sandbox) if !self.stopped => Plan::Act(vec![TaskAction::StopSandbox(sandbox)]),
@@ -1001,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_collection_fails_the_task() {
+    fn a_failed_collection_is_retried_then_fails_the_task_keeping_its_sandbox() {
         let mut collecting = working(10);
         collecting.extend([
             TaskEvent::TurnEnded {
@@ -1010,19 +1053,70 @@ mod tests {
             },
             TaskEvent::CommitsCollecting { job: id(30) },
         ]);
-        S::given(collecting)
+        let retried = S::given(collecting.clone())
             .when(|task, _| task.job_ended(id(30), exited(128)))
+            .then([TaskEvent::CommitsCollected {
+                job: id(30),
+                ending: exited(128),
+            }]);
+        retried.plan().then_actions([TaskAction::CollectCommits]);
+
+        collecting.extend([
+            TaskEvent::CommitsCollected {
+                job: id(30),
+                ending: exited(128),
+            },
+            TaskEvent::CommitsCollecting { job: id(31) },
+            TaskEvent::CommitsCollected {
+                job: id(31),
+                ending: exited(128),
+            },
+            TaskEvent::CommitsCollecting { job: id(32) },
+        ]);
+        let failed = S::given(collecting)
+            .when(|task, _| task.job_ended(id(32), exited(128)))
             .then([
                 TaskEvent::CommitsCollected {
-                    job: id(30),
+                    job: id(32),
                     ending: exited(128),
                 },
                 TaskEvent::Ended {
                     end: TaskEnd::Failed {
-                        reason: "collecting the commits of turn 1 exited with 128".to_owned(),
+                        reason: "collecting the commits of turn 1 exited with 128, 3 times; the \
+                                 sandbox is kept for recovery until the task is cancelled"
+                            .to_owned(),
                     },
                 },
             ]);
+        failed.plan().then_converged();
+    }
+
+    #[test]
+    fn cancelling_a_task_that_kept_its_sandbox_releases_it() {
+        let mut kept = working(10);
+        kept.push(TaskEvent::TurnEnded {
+            job: id(20),
+            ending: exited(0),
+        });
+        for job in 30..33 {
+            kept.extend([
+                TaskEvent::CommitsCollecting { job: id(job) },
+                TaskEvent::CommitsCollected {
+                    job: id(job),
+                    ending: exited(128),
+                },
+            ]);
+        }
+        kept.push(TaskEvent::Ended {
+            end: TaskEnd::Failed {
+                reason: "collecting failed".to_owned(),
+            },
+        });
+        S::given(kept)
+            .when(|task, _| task.cancel())
+            .then([TaskEvent::SandboxReleased])
+            .plan()
+            .then_actions([TaskAction::StopSandbox(id(10))]);
     }
 
     #[test]

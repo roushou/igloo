@@ -173,7 +173,7 @@ impl Mcp {
 
     #[tool(
         name = "task.cancel",
-        description = "Cancels a task and stops its sandbox."
+        description = "Cancels a task and stops its sandbox; for a task that failed collecting its commits, stops the sandbox it kept."
     )]
     async fn task_cancel(
         &self,

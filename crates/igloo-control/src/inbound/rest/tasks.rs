@@ -109,7 +109,8 @@ pub(super) async fn get(
     Ok(Json(get_task(&state, &id).await?))
 }
 
-/// Cancels a task and stops its sandbox. Cancelling an ended task changes nothing.
+/// Cancels a task and stops its sandbox. Cancelling an ended task changes nothing, except that
+/// a task that failed collecting its commits stops the sandbox it kept for recovery.
 #[utoipa::path(
     post,
     path = "/v1/tasks/{id}/cancel",
