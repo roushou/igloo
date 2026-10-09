@@ -6,7 +6,8 @@
 #   deploy/vps.sh install   Sets up the host, then runs `update`. Safe to rerun: existing
 #                           configuration and secrets in /etc/igloo are kept.
 #   deploy/vps.sh update    Builds the binaries and the web console, installs them and restarts
-#                           both services.
+#                           both services. Refuses while an agent task is preparing or working,
+#                           since restarting the worker loses its sandbox; FORCE=1 overrides.
 #   deploy/vps.sh token     Prints the API token (IGLOO_DEV_TOKEN).
 set -euo pipefail
 
@@ -117,7 +118,32 @@ install_units() {
   sudo systemctl enable igloo-control igloo-worker
 }
 
+# Fails when Igloo answers and an agent task is preparing or working: restarting the worker
+# would lose its sandbox and the agent's uncommitted work.
+check_idle() {
+  [[ ${FORCE:-} == 1 ]] && return
+  local token busy
+  token=$(setting IGLOO_DEV_TOKEN)
+  busy=$(curl -sf -H "Authorization: Bearer $token" http://127.0.0.1:7000/v1/repos 2>/dev/null \
+    | python3 -c '
+import json, sys, urllib.request
+token = sys.argv[1]
+for repo in json.load(sys.stdin):
+    url = f"http://127.0.0.1:7000/v1/repos/{repo["id"]}/tasks?phase=preparing&phase=working"
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    for task in json.load(urllib.request.urlopen(request, timeout=10)):
+        print(task["id"], task["phase"])
+' "$token" 2>/dev/null || true)
+  if [[ -n $busy ]]; then
+    echo "Agent tasks are running; deploying now would lose their sandboxes:" >&2
+    echo "$busy" >&2
+    echo "Deploy when they await review, or rerun with FORCE=1." >&2
+    exit 1
+  fi
+}
+
 update() {
+  check_idle
   # Packages added since the host was installed.
   install_packages
   # shellcheck source=/dev/null

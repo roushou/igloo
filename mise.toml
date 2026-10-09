@@ -7,7 +7,7 @@ IGLOO_VPS_DIR = "{{ get_env(name='IGLOO_VPS_DIR', default='igloo') }}"
 
 [tasks.deploy]
 description = "Pull main on the host, rebuild and restart Igloo"
-run = "ssh -t $IGLOO_VPS \"cd $IGLOO_VPS_DIR && git pull --ff-only && ./deploy/vps.sh update\""
+run = "ssh -t $IGLOO_VPS \"cd $IGLOO_VPS_DIR && git pull --ff-only && FORCE=${FORCE:-} ./deploy/vps.sh update\""
 
 [tasks.tunnel]
 description = "Forward the host's Igloo API and MCP to http://127.0.0.1:7000"
