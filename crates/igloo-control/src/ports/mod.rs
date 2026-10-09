@@ -24,7 +24,7 @@ pub use event_log::{
     CommitMeta, CorrelationId, CorrelationMarker, EventEnvelope, EventId, EventLog, EventMarker,
     NewEvent, Sequence,
 };
-pub use forge::{Expected, Forge, ForgeError, Remote};
+pub use forge::{ChangedFile, Expected, FileStatus, Forge, ForgeError, Remote};
 pub use id::{IdGenerator, IdGeneratorExt};
 pub use idempotency::{Claim, IdempotencyStore, KeyedRequest, StoredResponse};
 pub use logs::{LogEntry, LogStore};

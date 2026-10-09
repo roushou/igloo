@@ -4,7 +4,7 @@ use igloo_core::job::{FencingToken, Job, JobFailure, JobSpec, Lease};
 use igloo_core::process::OutputStream;
 use igloo_core::sandbox::{DesiredState, FailureReason, NetworkPolicy, Sandbox, SandboxPhase};
 use igloo_core::snapshot::{MediaType, SnapshotLayer};
-use igloo_core::worker::{Arch, Capabilities, NoRuntime, Os, ProtocolVersion, RuntimeKind};
+use igloo_core::worker::{Arch, Capabilities, NoRuntime, Os, ProtocolVersion, RuntimeKind, Usage};
 use igloo_core::{Digest, Entity, Generation, Resource};
 
 use crate::v1;
@@ -81,6 +81,30 @@ impl From<&Capabilities> for v1::Capabilities {
             });
         }
         message
+    }
+}
+
+impl From<&Usage> for v1::Usage {
+    fn from(usage: &Usage) -> Self {
+        Self {
+            disk_total_bytes: usage.disk_total_bytes(),
+            disk_free_bytes: usage.disk_free_bytes(),
+            layer_cache_bytes: usage.layer_cache_bytes(),
+            layer_cache_limit_bytes: usage.layer_cache_limit_bytes(),
+            sandboxes: usage.sandboxes(),
+        }
+    }
+}
+
+impl From<&v1::Usage> for Usage {
+    fn from(usage: &v1::Usage) -> Self {
+        Self::new(
+            usage.disk_total_bytes,
+            usage.disk_free_bytes,
+            usage.layer_cache_bytes,
+            usage.layer_cache_limit_bytes,
+            usage.sandboxes,
+        )
     }
 }
 
@@ -322,6 +346,30 @@ mod tests {
             ..v1::Hello::default()
         };
         assert_eq!(Capabilities::try_from(&hello), Ok(capabilities));
+    }
+
+    #[test]
+    fn usage_round_trips() {
+        let usage = Usage::new(100, 40, 7, 20, 3);
+        assert_eq!(Usage::from(&v1::Usage::from(&usage)), usage);
+    }
+
+    #[test]
+    fn a_hello_without_usage_is_still_a_hello() {
+        let capabilities = Capabilities::new(
+            Os::Linux,
+            Arch::X86_64,
+            BTreeSet::from([RuntimeKind::Oci]),
+            ProtocolVersion::V1,
+        )
+        .expect("one runtime");
+        let hello = v1::Hello {
+            protocol_version: 1,
+            capabilities: Some(v1::Capabilities::from(&capabilities)),
+            ..v1::Hello::default()
+        };
+        assert!(hello.usage.is_none());
+        assert!(Capabilities::try_from(&hello).is_ok());
     }
 
     #[test]

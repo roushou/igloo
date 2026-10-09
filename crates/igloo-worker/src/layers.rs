@@ -263,6 +263,16 @@ impl LayerCache {
         Ok(())
     }
 
+    /// Bytes of file content the cache holds, pinned layers included.
+    pub(crate) fn size(&self) -> u64 {
+        self.index().entries.values().map(|entry| entry.size).sum()
+    }
+
+    /// The budget above which unpinned layers are evicted.
+    pub(crate) fn budget(&self) -> u64 {
+        self.inner.budget
+    }
+
     /// Whether `digest` is cached.
     #[cfg(test)]
     pub(crate) fn contains(&self, digest: Digest) -> bool {

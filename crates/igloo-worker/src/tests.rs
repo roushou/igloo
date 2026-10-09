@@ -209,7 +209,7 @@ impl Session {
             .expect("send");
     }
 
-    /// The next worker message other than heartbeats.
+    /// The next worker message other than heartbeats and usage reports.
     async fn next(&mut self) -> Uplink {
         loop {
             let message = tokio::time::timeout(Duration::from_secs(10), self.inbound.message())
@@ -219,7 +219,7 @@ impl Session {
                 .expect("stream open")
                 .message
                 .expect("message set");
-            if !matches!(message, Uplink::Heartbeat(_)) {
+            if !matches!(message, Uplink::Heartbeat(_) | Uplink::Usage(_)) {
                 return message;
             }
         }
@@ -337,6 +337,16 @@ impl Harness {
 
     /// Runs a worker on `data_dir` until the returned token is cancelled.
     async fn worker(&mut self, data_dir: &Path) -> CancellationToken {
+        self.worker_reporting_every(data_dir, Worker::USAGE_EVERY)
+            .await
+    }
+
+    /// As [`Harness::worker`], reporting usage every `interval`.
+    async fn worker_reporting_every(
+        &mut self,
+        data_dir: &Path,
+        interval: Duration,
+    ) -> CancellationToken {
         let overlay = cfg!(target_os = "linux") && std::env::var_os("IGLOO_TEST_OVERLAY").is_some();
         let config = WorkerConfig::from_vars([
             (
@@ -353,6 +363,7 @@ impl Harness {
         let worker = Worker::with_blob_source(config, self.blobs.clone())
             .await
             .expect("worker");
+        let worker = worker.with_usage_every(interval);
         let cancel = CancellationToken::new();
         let token = cancel.clone();
         self.tasks.spawn(async move {
@@ -777,4 +788,45 @@ async fn heartbeats_renew_a_short_lease_within_its_ttl() {
     tokio::time::timeout(Duration::from_millis(1500), renewals)
         .await
         .expect("two renewals within 1.5 s of a 1 s lease");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_worker_reports_usage_when_it_connects_and_then_periodically() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let _worker = harness
+        .worker_reporting_every(data.path(), Duration::from_millis(200))
+        .await;
+    let mut session = harness.session().await;
+    let first = session.hello.usage.expect("usage in the hello");
+    assert!(first.disk_total_bytes > 0, "{first:?}");
+    assert!(first.disk_free_bytes <= first.disk_total_bytes);
+    assert_eq!(first.layer_cache_bytes, 0);
+    assert_eq!(first.layer_cache_limit_bytes, 20 * 1024 * 1024 * 1024);
+    assert_eq!(first.sandboxes, 0);
+
+    let snapshot = harness.blobs.snapshot();
+    session
+        .assign(&sandbox_id(), &snapshot, v1::DesiredState::Running)
+        .await;
+    let held = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let message = session
+                .inbound
+                .message()
+                .await
+                .expect("stream healthy")
+                .expect("stream open")
+                .message;
+            if let Some(Uplink::Usage(usage)) = message
+                && usage.sandboxes == 1
+                && usage.layer_cache_bytes > 0
+            {
+                return usage;
+            }
+        }
+    })
+    .await
+    .expect("a usage report with the sandbox and its layer within 10 s");
+    assert_eq!(held.layer_cache_limit_bytes, first.layer_cache_limit_bytes);
 }

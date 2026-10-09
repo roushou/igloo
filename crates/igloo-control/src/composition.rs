@@ -38,7 +38,7 @@ use crate::inbound::mcp::Mcp;
 use crate::inbound::rest::{DevToken, RestApi};
 use crate::platform::{
     BuildModule, ChangeModule, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule,
-    WorkerModule,
+    WorkerModule, WorkerUsages,
 };
 use crate::ports::{IdGenerator, RegistryError, StorageError};
 
@@ -149,6 +149,7 @@ impl Server {
         supervisor.spawn("event-log", move |cancel| async move {
             events.follow(cancel).await.map_err(AppError::from)
         });
+        let usages = WorkerUsages::new();
         let gateway = Gateway::new(
             &builder,
             builder.bus(),
@@ -156,7 +157,8 @@ impl Server {
             config.join_token.clone(),
             blob_urls.clone(),
         )?
-        .with_lease_ttl(config.lease_ttl);
+        .with_lease_ttl(config.lease_ttl)
+        .with_usages(usages.clone());
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(Self::DEV_USER)),
         };
@@ -165,7 +167,8 @@ impl Server {
             builder.bus(),
             DevToken::new(config.dev_token.clone(), actor),
             blob_urls,
-        )?;
+        )?
+        .with_usages(usages);
         let api = Mcp::router(&rest).merge(rest.router());
         let http = match &config.web_dir {
             Some(dir) => WebConsole::new(dir).mount(api),

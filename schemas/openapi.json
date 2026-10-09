@@ -376,6 +376,59 @@
         }
       }
     },
+    "/v1/changes/{id}/diff": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "What a revision of a change changes: the files that differ between the revision's base and\nhead in the repository's mirror, each with its unified patch as git prints it. A patch over\n256 KiB is left out and its file marked truncated.",
+        "operationId": "getChangeDiff",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "path",
+            "description": "The revision, from 1; the latest when omitted.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/changes/{id}/merge": {
       "post": {
         "tags": [
@@ -2547,6 +2600,39 @@
           "stopped"
         ]
       },
+      "DiffResource": {
+        "type": "object",
+        "description": "What one revision of a change changes, relative to where it forked from the target branch.",
+        "required": [
+          "revision",
+          "base",
+          "head",
+          "files"
+        ],
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "The commit the diff starts from: the revision's base."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileDiffResource"
+            },
+            "description": "The files that differ, sorted by path."
+          },
+          "head": {
+            "type": "string",
+            "description": "The commit the diff ends at: the revision's head."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The revision, from 1.",
+            "minimum": 0
+          }
+        }
+      },
       "EventNotice": {
         "type": "object",
         "description": "What `GET /v1/events` sends as the `data` of each server-sent event: which resource changed\nand when, never the domain payload. Clients refetch the resource.",
@@ -2647,6 +2733,72 @@
           "message": {
             "type": "string",
             "description": "Why it is invalid."
+          }
+        }
+      },
+      "FileChangeStatus": {
+        "type": "string",
+        "description": "How a file differs in a change's diff.",
+        "enum": [
+          "added",
+          "modified",
+          "deleted",
+          "renamed"
+        ]
+      },
+      "FileDiffResource": {
+        "type": "object",
+        "description": "One file of a change's diff.\n\nA file has a `patch` unless it is binary or `truncated`.",
+        "required": [
+          "path",
+          "status",
+          "additions",
+          "deletions",
+          "binary",
+          "truncated"
+        ],
+        "properties": {
+          "additions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lines added; 0 for a binary file.",
+            "minimum": 0
+          },
+          "binary": {
+            "type": "boolean",
+            "description": "Whether the file is binary."
+          },
+          "deletions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lines removed; 0 for a binary file.",
+            "minimum": 0
+          },
+          "patch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unified patch exactly as git prints it, from its `diff --git` header on. Absent for\na binary file and when `truncated`."
+          },
+          "path": {
+            "type": "string",
+            "description": "Its path after the change; for a deleted file, the path it had."
+          },
+          "previous_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The path a renamed file had before."
+          },
+          "status": {
+            "$ref": "#/components/schemas/FileChangeStatus",
+            "description": "How it differs."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether the patch was left out for exceeding [`FileDiffResource::MAX_PATCH_BYTES`]."
           }
         }
       },
@@ -3811,6 +3963,17 @@
           "schedulable": {
             "type": "boolean",
             "description": "Whether new work may be placed on it now: connected and schedulable."
+          },
+          "usage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkerUsage",
+                "description": "Its latest usage report; absent until the worker sends one, and after a server restart\nuntil it sends the next."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -3821,6 +3984,55 @@
           "schedulable",
           "draining"
         ]
+      },
+      "WorkerUsage": {
+        "type": "object",
+        "description": "What a worker last reported holding of its machine.",
+        "required": [
+          "disk_total_bytes",
+          "disk_free_bytes",
+          "layer_cache_bytes",
+          "layer_cache_limit_bytes",
+          "sandboxes",
+          "reported_at"
+        ],
+        "properties": {
+          "disk_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Free bytes of that file system.",
+            "minimum": 0
+          },
+          "disk_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total bytes of the file system holding its data directory.",
+            "minimum": 0
+          },
+          "layer_cache_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes its layer cache holds.",
+            "minimum": 0
+          },
+          "layer_cache_limit_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The budget above which its unpinned layers are evicted.",
+            "minimum": 0
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server received the report."
+          },
+          "sandboxes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Sandboxes it holds, starting or ready.",
+            "minimum": 0
+          }
+        }
       }
     },
     "securitySchemes": {

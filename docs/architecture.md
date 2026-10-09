@@ -390,7 +390,7 @@ composition.rs  Server: the only place naming concrete adapters
   is committed as `schemas/openapi.json` and a test fails on drift.
 - **SSE**: live events and logs from the event log, resumable with `Last-Event-ID`.
 - **Worker protocol** `igloo.worker.v1`: the server sends the full desired `Assignment`, lease
-  grants, cancels and drain; the worker sends hello, heartbeats, status, logs and results.
+  grants, cancels and drain; the worker sends hello, heartbeats, usage (disk, layer cache, sandboxes held; every 30 s), status, logs and results.
   The handshake negotiates the version; workers one version behind are accepted.
 - **MCP**: streamable HTTP at `/mcp` beside REST, with the same token and resources; tools are
   thin adapters over the command bus, named like their commands (`task.create`). They neither

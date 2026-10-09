@@ -15,7 +15,7 @@ use std::time::Duration;
 use igloo_core::job::Job;
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::Seal;
-use igloo_core::worker::{Capabilities, WorkerId};
+use igloo_core::worker::{Capabilities, Usage, WorkerId};
 use igloo_core::{Actor, Labels, SystemComponent};
 use igloo_worker_protocol::v1;
 use igloo_worker_protocol::v1::worker_gateway_service_server::{
@@ -33,7 +33,7 @@ use crate::app::{
 };
 use crate::inbound::BlobUrls;
 use crate::platform::{
-    ConnectWorker, JobQueries, RegisterWorker, SandboxQueries, SealQueries, Snapshots,
+    ConnectWorker, JobQueries, RegisterWorker, SandboxQueries, SealQueries, Snapshots, WorkerUsages,
 };
 use crate::ports::{Clock, EntityStore, EventLog, IdGenerator, IdGeneratorExt, LogStore};
 
@@ -62,6 +62,7 @@ struct Shared {
     seals: SealQueries,
     blob_urls: BlobUrls,
     secrets: JobSecrets,
+    usages: WorkerUsages,
 }
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<v1::ConnectResponse, Status>> + Send>>;
@@ -102,6 +103,7 @@ impl Gateway {
                     SandboxQueries::new(Arc::clone(&sandbox_store)),
                     Arc::clone(&ports.secrets),
                 ),
+                usages: WorkerUsages::new(),
             }),
         })
     }
@@ -112,6 +114,16 @@ impl Gateway {
         // A gateway that has not been turned into a service is its state's only owner.
         if let Some(shared) = Arc::get_mut(&mut self.shared) {
             shared.lease_ttl = ttl;
+        }
+        self
+    }
+
+    /// Keeps the usage reports workers send in `usages`.
+    #[must_use]
+    pub fn with_usages(mut self, usages: WorkerUsages) -> Self {
+        // A gateway that has not been turned into a service is its state's only owner.
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.usages = usages;
         }
         self
     }
@@ -145,6 +157,14 @@ impl Shared {
             },
             self.ids.next(),
         )
+    }
+
+    /// Keeps `usage` as `worker`'s latest report, if it sent one.
+    fn record_usage(&self, worker: WorkerId, usage: Option<&v1::Usage>) {
+        if let Some(usage) = usage {
+            self.usages
+                .record(worker, Usage::from(usage), self.clock.now());
+        }
     }
 
     /// Registers a new worker, or reconnects a known one.
@@ -227,6 +247,7 @@ impl WorkerGatewayService for Gateway {
             ));
         };
         let worker = self.shared.admit(&hello).await?;
+        self.shared.record_usage(worker, hello.usage.as_ref());
         let (outbound, responses) = mpsc::channel(64);
         let welcome = v1::ConnectResponse {
             message: Some(v1::connect_response::Message::Welcome(v1::Welcome {

@@ -11,7 +11,7 @@ use igloo_git::{
     RefName, Refspec, RemoteUrl, RepoPath, Repository, Signature,
 };
 
-use crate::ports::{Expected, Forge, ForgeError, Remote};
+use crate::ports::{ChangedFile, Expected, FileStatus, Forge, ForgeError, Remote};
 
 /// Forges reached with the `git` binary in an isolated environment: GitHub over HTTPS with a
 /// token, or a repository on the server's file system. Each repository has a bare mirror under
@@ -121,6 +121,31 @@ impl GitForge {
 
     fn io(error: impl std::fmt::Display) -> ForgeError {
         ForgeError::Git(error.to_string())
+    }
+}
+
+impl From<igloo_git::FileStatus> for FileStatus {
+    fn from(status: igloo_git::FileStatus) -> Self {
+        match status {
+            igloo_git::FileStatus::Added => Self::Added,
+            igloo_git::FileStatus::Modified => Self::Modified,
+            igloo_git::FileStatus::Deleted => Self::Deleted,
+            igloo_git::FileStatus::Renamed => Self::Renamed,
+        }
+    }
+}
+
+impl From<&igloo_git::FileDiff> for ChangedFile {
+    fn from(file: &igloo_git::FileDiff) -> Self {
+        Self {
+            path: file.path().as_str().to_owned(),
+            previous_path: file.previous().map(|path| path.as_str().to_owned()),
+            status: file.status().into(),
+            additions: file.additions(),
+            deletions: file.deletions(),
+            binary: file.is_binary(),
+            patch: file.patch().to_owned(),
+        }
     }
 }
 
@@ -279,6 +304,21 @@ impl Forge for GitForge {
         to: &CommitId,
     ) -> Result<Vec<String>, ForgeError> {
         self.paths(repo, from, to, None).await
+    }
+
+    async fn diff(
+        &self,
+        repo: RepoId,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<Vec<ChangedFile>, ForgeError> {
+        let mirror = self.holding(repo, &[from, to]).await?;
+        Ok(mirror
+            .file_diffs(from, to)
+            .await?
+            .iter()
+            .map(ChangedFile::from)
+            .collect())
     }
 
     async fn deleted_paths(

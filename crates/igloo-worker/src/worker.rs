@@ -24,6 +24,7 @@ use crate::reconciler::Sandboxes;
 use crate::runtime::{OciRuntime, ProcessRuntime, SandboxRuntime};
 use crate::seal::{SealError, Sealer};
 use crate::store::LocalStore;
+use crate::usage::UsageMeter;
 
 /// A worker: keeps one connection to the gateway, converges its sandboxes to the assignment,
 /// and runs leased jobs. Running jobs and pending results survive reconnections.
@@ -37,6 +38,8 @@ pub struct Worker {
     running: HashMap<String, (u64, CancellationToken)>,
     deferred: Vec<v1::LeaseGrant>,
     heartbeat_every: Duration,
+    usage: UsageMeter,
+    usage_every: Duration,
     sealer: Sealer,
     seals: JoinSet<(String, Result<(), SealError>)>,
     sealing: HashSet<String>,
@@ -75,6 +78,8 @@ impl Worker {
     /// How often held leases are renewed at most: a third of the shortest lease granted, so a
     /// renewal can be missed twice before a lease expires.
     const HEARTBEAT: Duration = Duration::from_secs(10);
+    /// How often usage is reported after the report in the hello.
+    pub(crate) const USAGE_EVERY: Duration = Duration::from_secs(30);
     const MIN_HEARTBEAT: Duration = Duration::from_millis(100);
     const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
@@ -108,8 +113,14 @@ impl Worker {
         )
         .await?;
         let sealer = Sealer::new(source, layers.clone(), config.rootfs, store.clone());
-        let sandboxes =
-            Sandboxes::adopt(Arc::clone(&runtime), layers, config.rootfs, store.clone()).await?;
+        let sandboxes = Sandboxes::adopt(
+            Arc::clone(&runtime),
+            layers.clone(),
+            config.rootfs,
+            store.clone(),
+        )
+        .await?;
+        let usage = UsageMeter::new(store.root().to_owned(), layers);
         let capabilities = Capabilities::new(
             Self::os(),
             Self::arch(),
@@ -128,12 +139,21 @@ impl Worker {
             running: HashMap::new(),
             deferred: Vec::new(),
             heartbeat_every: Self::HEARTBEAT,
+            usage,
+            usage_every: Self::USAGE_EVERY,
             sealer,
             seals: JoinSet::new(),
             sealing: HashSet::new(),
             uplink,
             queued,
         })
+    }
+
+    /// Reports usage every `interval` instead of every 30 seconds.
+    #[cfg(test)]
+    pub(crate) const fn with_usage_every(mut self, interval: Duration) -> Self {
+        self.usage_every = interval;
+        self
     }
 
     /// Serves until `cancel` fires, reconnecting with backoff whenever the connection drops.
@@ -202,6 +222,10 @@ impl Worker {
         cancel: &CancellationToken,
     ) -> Result<(), SessionError> {
         let mut heartbeat = tokio::time::interval(self.heartbeat_every);
+        let mut usage = tokio::time::interval_at(
+            tokio::time::Instant::now() + self.usage_every,
+            self.usage_every,
+        );
         loop {
             if heartbeat.period() != self.heartbeat_every {
                 heartbeat = tokio::time::interval(self.heartbeat_every);
@@ -249,6 +273,10 @@ impl Worker {
                         let _ = requests.send(Self::request(report)).await;
                     }
                     self.start_deferred(requests).await?;
+                }
+                _ = usage.tick() => {
+                    let report = v1::Usage::from(&self.usage.measure(self.sandboxes.held()));
+                    let _ = requests.send(Self::request(Uplink::Usage(report))).await;
                 }
                 _ = heartbeat.tick() => {
                     let running = self
@@ -393,6 +421,7 @@ impl Worker {
                 .iter()
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect(),
+            usage: Some(v1::Usage::from(&self.usage.measure(self.sandboxes.held()))),
         }
     }
 

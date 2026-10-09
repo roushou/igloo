@@ -92,6 +92,15 @@ pub trait Forge: Send + Sync {
         to: &CommitId,
     ) -> Result<Vec<String>, ForgeError>;
 
+    /// The files that differ between `from` and `to` in `repo`'s mirror, sorted by path, with
+    /// renames detected and the unified patch of each.
+    async fn diff(
+        &self,
+        repo: RepoId,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<Vec<ChangedFile>, ForgeError>;
+
     /// The paths present at `from` and absent at `to`, sorted.
     async fn deleted_paths(
         &self,
@@ -99,6 +108,42 @@ pub trait Forge: Send + Sync {
         from: &CommitId,
         to: &CommitId,
     ) -> Result<Vec<String>, ForgeError>;
+}
+
+/// One file that differs between two commits.
+///
+/// Invariants: `previous_path` is set exactly when `status` is [`FileStatus::Renamed`]; a binary
+/// file has no counts and an empty `patch`; any other `patch` is the unified patch exactly as
+/// git prints it, from its `diff --git` header on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangedFile {
+    /// The path after the change; for a deletion, the path the file had.
+    pub path: String,
+    /// The path a renamed file had before.
+    pub previous_path: Option<String>,
+    /// How the file differs.
+    pub status: FileStatus,
+    /// Lines added.
+    pub additions: u64,
+    /// Lines removed.
+    pub deletions: u64,
+    /// Whether the file is binary.
+    pub binary: bool,
+    /// The unified patch.
+    pub patch: String,
+}
+
+/// How a file differs between two commits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileStatus {
+    /// Absent before, present after.
+    Added,
+    /// Present in both with different content, mode or kind.
+    Modified,
+    /// Present before, absent after.
+    Deleted,
+    /// Moved from another path, possibly with changes.
+    Renamed,
 }
 
 /// A repository on its forge, with what is needed to reach it.

@@ -1229,3 +1229,132 @@ async fn workers_are_listed_with_what_their_sandboxes_hold() {
         2 * u64::from(default.memory_mib())
     );
 }
+
+#[tokio::test]
+async fn a_changes_diff_lists_its_files_with_patches_per_revision() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    let body = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+    let fork = origin.commit(
+        "base",
+        &[
+            ("keep", Some("1\n2\n")),
+            ("gone", Some("bye\n")),
+            ("old name", Some(body)),
+            ("blob", Some("a\0b")),
+        ],
+    );
+    origin.switch("feature");
+    let huge = "x\n".repeat(200_000);
+    let first = origin.commit(
+        "first",
+        &[
+            ("keep", Some("1\n2\n3\n")),
+            ("gone", None),
+            ("old name", None),
+            (
+                "new name",
+                Some("one\ntwo\nthree\nfour\nfive\nsix\nseven\nEIGHT\n"),
+            ),
+            ("added", Some("hello\n")),
+            ("blob", Some("a\0c")),
+            ("huge", Some(&huge)),
+        ],
+    );
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    let id = change["id"].as_str().expect("id");
+
+    let (status, diff, _) = Call::new(Method::GET, format!("/v1/changes/{id}/diff"))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{diff}");
+    assert_eq!(diff["revision"], 1);
+    assert_eq!(diff["base"], fork.to_string());
+    assert_eq!(diff["head"], first.to_string());
+    let files = diff["files"].as_array().expect("files");
+    let summary: Vec<_> = files
+        .iter()
+        .map(|file| {
+            (
+                file["path"].as_str().expect("path"),
+                file["status"].as_str().expect("status"),
+                file["additions"].as_u64().expect("additions"),
+                file["deletions"].as_u64().expect("deletions"),
+                file["binary"].as_bool().expect("binary"),
+                file["truncated"].as_bool().expect("truncated"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("added", "added", 1, 0, false, false),
+            ("blob", "modified", 0, 0, true, false),
+            ("gone", "deleted", 0, 1, false, false),
+            ("huge", "added", 200_000, 0, false, true),
+            ("keep", "modified", 1, 0, false, false),
+            ("new name", "renamed", 1, 1, false, false),
+        ]
+    );
+    let file = |path: &str| {
+        files
+            .iter()
+            .find(|file| file["path"] == path)
+            .expect("file")
+    };
+    assert_eq!(file("new name")["previous_path"], "old name");
+    assert!(file("added").get("previous_path").is_none());
+    assert!(file("blob").get("patch").is_none());
+    assert!(file("huge").get("patch").is_none(), "over 256 KiB");
+    assert_eq!(
+        file("keep")["patch"],
+        "diff --git a/keep b/keep\nindex 1191247..01e79c3 100644\n--- a/keep\n+++ b/keep\n\
+         @@ -1,2 +1,3 @@\n 1\n 2\n+3\n"
+    );
+}
+
+#[tokio::test]
+async fn a_changes_diff_follows_its_revisions() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    let fork = origin.commit("base", &[("added", Some("hello\n"))]);
+    origin.switch("feature");
+    let first = origin.commit("first", &[("added", Some("hello\nagain\n"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    let id = change["id"].as_str().expect("id");
+    let diff_of =
+        |query: &str| Call::new(Method::GET, format!("/v1/changes/{id}/diff{query}")).send(&router);
+
+    let (_, diff, _) = diff_of("").await;
+    assert_eq!(
+        (diff["revision"].as_u64(), &diff["head"]),
+        (Some(1), &json!(first.to_string()))
+    );
+
+    let second = origin.commit("second", &[("added", Some("hello\nagain\nmore\n"))]);
+    let (_, revised, _) = Call::new(Method::POST, format!("/v1/changes/{id}/revisions"))
+        .send(&router)
+        .await;
+    assert_eq!(revised["revisions"][1]["head"], second.to_string());
+    let (_, latest, _) = diff_of("").await;
+    assert_eq!(latest["revision"], 2);
+    assert_eq!(latest["base"], fork.to_string());
+    assert_eq!(latest["head"], second.to_string());
+    assert_eq!(latest["files"][0]["additions"], 2);
+    let (_, earlier, _) = diff_of("?revision=1").await;
+    assert_eq!(earlier, diff, "an earlier revision keeps its own diff");
+
+    let (status, missing, _) = diff_of("?revision=3").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["code"], "change.revision_not_found");
+    let unknown = "chg_00000000000000000000000000";
+    let (status, missing, _) = Call::new(Method::GET, format!("/v1/changes/{unknown}/diff"))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["code"], "change.not_found");
+}

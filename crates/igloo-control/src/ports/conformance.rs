@@ -17,10 +17,10 @@ use tokio::io::AsyncReadExt;
 use igloo_core::repo::{BranchName, CommitId, RepoId, SecretName};
 
 use super::{
-    BlobError, BlobStore, Checkpoints, Claim, CommitMeta, EntityStore, EventLog, Expected, Forge,
-    ForgeError, IdempotencyStore, ImageReference, ImageRegistry, KeyedRequest, LogStore, Platform,
-    RegistryError, Remote, SecretStore, SecretValue, Sequence, StorageError, StoredResponse,
-    Versioned,
+    BlobError, BlobStore, Checkpoints, Claim, CommitMeta, EntityStore, EventLog, Expected,
+    FileStatus, Forge, ForgeError, IdempotencyStore, ImageReference, ImageRegistry, KeyedRequest,
+    LogStore, Platform, RegistryError, Remote, SecretStore, SecretValue, Sequence, StorageError,
+    StoredResponse, Versioned,
 };
 
 const NOW: Timestamp = Timestamp::new(jiff::Timestamp::constant(1_767_225_600, 0));
@@ -482,6 +482,7 @@ impl ForgeConformance {
         self.mirror_operations(&main, &second).await;
         self.bundles().await;
         self.squashes().await;
+        self.diffs().await;
     }
 
     /// `mirrored` reads the mirror as last fetched: not the origin's newer head, nothing for a
@@ -507,6 +508,88 @@ impl ForgeConformance {
                 .await
                 .expect("mirrored"),
             None
+        );
+    }
+
+    /// A diff lists added, modified, renamed and deleted files with their counts and the patch git
+    /// prints for each, and flags binary files.
+    async fn diffs(&self) {
+        let main = Self::branch("main");
+        let repo = self.remote.repo;
+        let body = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+        let base = self.origin.commit(
+            "diff base",
+            &[
+                ("d/keep", Some("1\n2\n")),
+                ("d/gone", Some("bye\n")),
+                ("d/old name", Some(body)),
+                ("d/blob", Some("a\0b")),
+            ],
+        );
+        let head = self.origin.commit(
+            "diff head",
+            &[
+                ("d/keep", Some("1\n2\n3\n")),
+                ("d/gone", None),
+                ("d/old name", None),
+                (
+                    "d/new name",
+                    Some("one\ntwo\nthree\nfour\nfive\nsix\nseven\nEIGHT\n"),
+                ),
+                ("d/added", Some("hello\n")),
+                ("d/blob", Some("a\0c")),
+            ],
+        );
+        self.forge.fetch(&self.remote, &main).await.expect("fetch");
+
+        let files = self.forge.diff(repo, &base, &head).await.expect("diff");
+        let summary: Vec<_> = files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_str(),
+                    file.previous_path.as_deref(),
+                    file.status,
+                    (file.additions, file.deletions),
+                    file.binary,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("d/added", None, FileStatus::Added, (1, 0), false),
+                ("d/blob", None, FileStatus::Modified, (0, 0), true),
+                ("d/gone", None, FileStatus::Deleted, (0, 1), false),
+                ("d/keep", None, FileStatus::Modified, (1, 0), false),
+                (
+                    "d/new name",
+                    Some("d/old name"),
+                    FileStatus::Renamed,
+                    (1, 1),
+                    false
+                ),
+            ]
+        );
+        let patch = |path: &str| {
+            files
+                .iter()
+                .find(|file| file.path == path)
+                .map(|file| file.patch.as_str())
+                .expect("file")
+        };
+        let keep = patch("d/keep");
+        assert!(keep.starts_with("diff --git a/d/keep b/d/keep\n"), "{keep}");
+        assert!(keep.ends_with("@@ -1,2 +1,3 @@\n 1\n 2\n+3\n"), "{keep}");
+        assert!(patch("d/blob").is_empty(), "a binary file has no patch");
+        assert!(patch("d/gone").contains("-bye\n"));
+
+        assert_eq!(self.forge.diff(repo, &head, &head).await.expect("diff"), []);
+        let unknown: CommitId = "1".repeat(40).parse().expect("commit");
+        let missing = self.forge.diff(repo, &base, &unknown).await;
+        assert!(
+            matches!(missing, Err(ForgeError::CommitNotFound(_))),
+            "{missing:?}"
         );
     }
 

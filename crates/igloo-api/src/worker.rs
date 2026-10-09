@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use igloo_core::worker::{self as domain, Arch, Os, RuntimeKind, Schedulability, Worker};
+use igloo_core::worker::{self as domain, Arch, Os, RuntimeKind, Schedulability, Usage, Worker};
 use igloo_core::{Entity, Resource, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -57,6 +57,25 @@ pub struct WorkerAllocation {
     pub memory_mib: u64,
 }
 
+/// What a worker last reported holding of its machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct WorkerUsage {
+    /// Total bytes of the file system holding its data directory.
+    pub disk_total_bytes: u64,
+    /// Free bytes of that file system.
+    pub disk_free_bytes: u64,
+    /// Bytes its layer cache holds.
+    pub layer_cache_bytes: u64,
+    /// The budget above which its unpinned layers are evicted.
+    pub layer_cache_limit_bytes: u64,
+    /// Sandboxes it holds, starting or ready.
+    pub sandboxes: u32,
+    /// When the server received the report.
+    #[schema(value_type = String, format = DateTime)]
+    pub reported_at: Timestamp,
+}
+
 /// A worker.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[non_exhaustive]
@@ -79,6 +98,10 @@ pub struct WorkerResource {
     pub capabilities: WorkerCapabilities,
     /// What its sandboxes hold.
     pub allocated: WorkerAllocation,
+    /// Its latest usage report; absent until the worker sends one, and after a server restart
+    /// until it sends the next.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<WorkerUsage>,
 }
 
 impl WorkerAllocation {
@@ -93,7 +116,29 @@ impl WorkerAllocation {
     }
 }
 
+impl WorkerUsage {
+    /// `usage`, received at `reported_at`.
+    #[must_use]
+    pub const fn new(usage: &Usage, reported_at: Timestamp) -> Self {
+        Self {
+            disk_total_bytes: usage.disk_total_bytes(),
+            disk_free_bytes: usage.disk_free_bytes(),
+            layer_cache_bytes: usage.layer_cache_bytes(),
+            layer_cache_limit_bytes: usage.layer_cache_limit_bytes(),
+            sandboxes: usage.sandboxes(),
+            reported_at,
+        }
+    }
+}
+
 impl WorkerResource {
+    /// Sets the worker's latest usage report.
+    #[must_use]
+    pub const fn with_usage(mut self, usage: Option<WorkerUsage>) -> Self {
+        self.usage = usage;
+        self
+    }
+
     /// Sets what the worker's sandboxes hold.
     #[must_use]
     pub const fn with_allocation(mut self, allocated: WorkerAllocation) -> Self {
@@ -152,6 +197,7 @@ impl From<&Worker> for WorkerResource {
                 protocol: capabilities.protocol().to_string(),
             },
             allocated: WorkerAllocation::default(),
+            usage: None,
         }
     }
 }

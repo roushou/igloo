@@ -7,6 +7,7 @@ use crate::commit::{Commit, Signature};
 use crate::config::ConfigKey;
 use crate::diff::{DiffEntry, DiffStatus};
 use crate::error::GitError;
+use crate::file_diff::{DiffOutputs, FileDiff};
 use crate::git::Git;
 use crate::invocation::{Invocation, Output};
 use crate::path::RepoPath;
@@ -205,6 +206,41 @@ impl Repository {
         }
         entries.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(entries)
+    }
+
+    /// The files that differ between `from` and `to`, sorted by path, with renames detected and
+    /// the unified patch of each.
+    pub async fn file_diffs(
+        &self,
+        from: &CommitId,
+        to: &CommitId,
+    ) -> Result<Vec<FileDiff>, GitError> {
+        let run = |format: &[&str]| {
+            let diff = self
+                .invoke("diff")
+                .arg("--no-color")
+                .arg("--no-ext-diff")
+                .arg("--no-textconv")
+                .arg("--find-renames")
+                .arg("--src-prefix=a/")
+                .arg("--dst-prefix=b/");
+            format
+                .iter()
+                .fold(diff, Invocation::arg)
+                .arg(from.as_str())
+                .arg(to.as_str())
+                .arg("--")
+                .run()
+        };
+        let name_status = run(&["--name-status", "-z"]).await?;
+        let numstat = run(&["--numstat", "-z"]).await?;
+        let patch = run(&["--patch"]).await?;
+        let outputs = DiffOutputs {
+            name_status: &name_status.stdout,
+            numstat: &numstat.stdout,
+            patch: &patch.stdout,
+        };
+        outputs.files().map_err(|reason| patch.unexpected(reason))
     }
 
     /// The content of the file at `path` in `commit`; `None` when there is no file there.
@@ -450,6 +486,7 @@ mod tests {
     use igloo_core::repo::{BranchName, CommitId};
 
     use super::*;
+    use crate::file_diff::FileStatus;
     use crate::git::Layout;
     use crate::testing::Fixture;
 
@@ -803,5 +840,94 @@ mod tests {
             (recorded.name(), recorded.seconds()),
             (author.name(), 1_700_000_000)
         );
+    }
+
+    #[tokio::test]
+    async fn file_diffs_carry_status_counts_and_patch() {
+        let dir = tempfile::tempdir().expect("dir");
+        let fixture = Fixture::new(dir.path());
+        let body = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+        let base = fixture.commit(
+            "base",
+            &[
+                ("keep", Some("1\n2\n")),
+                ("gone", Some("bye\n")),
+                ("old name", Some(body)),
+                ("blob", Some("a\0b")),
+                ("link", Some("plain\n")),
+            ],
+        );
+        std::fs::remove_file(fixture.work().join("link")).expect("remove");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("keep", fixture.work().join("link")).expect("symlink");
+        let next = fixture.commit(
+            "next",
+            &[
+                ("keep", Some("1\n2\n3\n")),
+                ("gone", None),
+                ("old name", None),
+                (
+                    "dir/new name",
+                    Some("one\ntwo\nthree\nfour\nfive\nsix\nseven\nEIGHT\n"),
+                ),
+                ("added", Some("hello\n")),
+                ("blob", Some("a\0c")),
+            ],
+        );
+        let repo = Git::isolated().open(fixture.origin()).await.expect("open");
+
+        let files = repo.file_diffs(&base, &next).await.expect("file diffs");
+        let summary: Vec<_> = files
+            .iter()
+            .map(|file| {
+                (
+                    file.path().as_str(),
+                    file.previous().map(RepoPath::as_str),
+                    file.status(),
+                    (file.additions(), file.deletions()),
+                    file.is_binary(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("added", None, FileStatus::Added, (1, 0), false),
+                ("blob", None, FileStatus::Modified, (0, 0), true),
+                (
+                    "dir/new name",
+                    Some("old name"),
+                    FileStatus::Renamed,
+                    (1, 1),
+                    false
+                ),
+                ("gone", None, FileStatus::Deleted, (0, 1), false),
+                ("keep", None, FileStatus::Modified, (1, 0), false),
+                ("link", None, FileStatus::Modified, (1, 1), false),
+            ]
+        );
+        let patch = |path: &str| {
+            files
+                .iter()
+                .find(|file| file.path().as_str() == path)
+                .map(FileDiff::patch)
+                .expect("file")
+        };
+        assert_eq!(
+            patch("keep"),
+            "diff --git a/keep b/keep\nindex 1191247..01e79c3 100644\n--- a/keep\n+++ b/keep\n\
+             @@ -1,2 +1,3 @@\n 1\n 2\n+3\n"
+        );
+        assert_eq!(patch("blob"), "");
+        assert!(patch("dir/new name").starts_with("diff --git a/old name b/dir/new name\n"));
+        assert!(patch("dir/new name").contains("similarity index"));
+        assert!(patch("gone").contains("deleted file mode"));
+        assert_eq!(
+            patch("link").matches("diff --git").count(),
+            2,
+            "a change of kind prints as a removal and an addition"
+        );
+
+        assert_eq!(repo.file_diffs(&next, &next).await.expect("same"), []);
     }
 }

@@ -4,7 +4,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use igloo_api::change::{
     ApprovalNeed, ApprovalState, ApproveRequest, ChangePhase, ChangeResource, ChecksState,
-    CommentRequest, MergeReadiness, OpenChangeRequest,
+    CommentRequest, DiffQuery, DiffResource, FileChangeStatus, FileDiffResource, MergeReadiness,
+    OpenChangeRequest,
 };
 use igloo_api::list::ListOrder;
 use igloo_api::list::PhaseFilter;
@@ -19,6 +20,7 @@ use crate::ci::{self, Readiness};
 use crate::platform::{
     ApproveChange, CloseChange, CommentChange, OpenChange, RequestChanges, ReviseChange,
 };
+use crate::ports::{ChangedFile, FileStatus};
 
 /// Opens a change proposing a branch pushed to the forge; its head is the first revision.
 #[utoipa::path(
@@ -111,6 +113,68 @@ pub(super) async fn get(
     Path(id): Path<String>,
 ) -> Result<Json<ChangeResource>, ApiError> {
     Ok(Json(get_change(&state, &id).await?))
+}
+
+/// What a revision of a change changes: the files that differ between the revision's base and
+/// head in the repository's mirror, each with its unified patch as git prints it. A patch over
+/// 256 KiB is left out and its file marked truncated.
+#[utoipa::path(
+    get,
+    operation_id = "getChangeDiff",
+    path = "/v1/changes/{id}/diff",
+    tag = "changes",
+    params(("id" = String, Path), DiffQuery),
+    responses((status = 200, body = DiffResource), (status = 404, body = Problem))
+)]
+pub(super) async fn diff(
+    State(state): State<ApiState>,
+    _: Caller,
+    Path(id): Path<String>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Json<DiffResource>, ApiError> {
+    let change = state
+        .changes
+        .get(parse_id(&id)?)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| ApiError::not_found("change.not_found"))?;
+    let revision = match query.revision {
+        None => change.latest(),
+        Some(number) => change
+            .revisions()
+            .find(|revision| revision.number == number)
+            .ok_or_else(|| ApiError::not_found("change.revision_not_found"))?,
+    };
+    let files = state
+        .forge
+        .diff(change.repo(), &revision.base, &revision.head)
+        .await
+        .map_err(AppError::from)?;
+    let files = files.into_iter().map(FileDiffResource::from).collect();
+    Ok(Json(DiffResource::new(revision, files)))
+}
+
+impl From<ChangedFile> for FileDiffResource {
+    fn from(file: ChangedFile) -> Self {
+        let status = match file.status {
+            FileStatus::Added => FileChangeStatus::Added,
+            FileStatus::Modified => FileChangeStatus::Modified,
+            FileStatus::Deleted => FileChangeStatus::Deleted,
+            FileStatus::Renamed => FileChangeStatus::Renamed,
+        };
+        let resource = Self::new(
+            file.path,
+            file.previous_path,
+            status,
+            file.additions,
+            file.deletions,
+        );
+        if file.binary {
+            resource.binary()
+        } else {
+            resource.with_patch(file.patch)
+        }
+    }
 }
 
 /// Change `id`.

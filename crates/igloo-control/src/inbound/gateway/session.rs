@@ -267,6 +267,10 @@ impl Session {
             Some(Inbound::LogChunk(chunk)) => self.append_log(chunk).await,
             Some(Inbound::JobResult(result)) => self.complete(result).await,
             Some(Inbound::SealFailed(failed)) => self.fail_seal(&failed).await,
+            Some(Inbound::Usage(usage)) => {
+                self.shared.record_usage(self.worker, Some(&usage));
+                Ok(())
+            }
             Some(Inbound::Hello(_)) | None => Ok(()),
         };
         if let Err(error) = result {

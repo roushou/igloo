@@ -97,6 +97,16 @@ impl Sandboxes {
         self.local.get(&id).map(|present| &present.sandbox)
     }
 
+    /// How many sandboxes the worker holds, starting or ready.
+    pub(crate) fn held(&self) -> usize {
+        self.local.len()
+            + self
+                .starting
+                .keys()
+                .filter(|id| !self.local.contains_key(id))
+                .count()
+    }
+
     /// Whether sandbox `id` is still starting.
     pub(crate) fn is_starting(&self, id: SandboxId) -> bool {
         self.starting.contains_key(&id)

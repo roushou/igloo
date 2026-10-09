@@ -1,6 +1,7 @@
 //! Workers: machines that run sandboxes, tracked through their connection to the server.
 
 mod capabilities;
+mod usage;
 
 use jiff::SignedDuration;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use crate::{
 pub use capabilities::{
     Arch, Capabilities, Mismatch, NoRuntime, Os, ProtocolVersion, Requirements, RuntimeKind,
 };
+pub use usage::Usage;
 
 /// Identifies a worker (`wrk_...`).
 pub type WorkerId = Id<Worker>;

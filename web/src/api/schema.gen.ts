@@ -89,6 +89,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/changes/{id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a revision of a change changes: the files that differ between the revision's base and
+         *     head in the repository's mirror, each with its unified patch as git prints it. A patch over
+         *     256 KiB is left out and its file marked truncated.
+         */
+        get: operations["getChangeDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/changes/{id}/merge": {
         parameters: {
             query?: never;
@@ -816,6 +837,20 @@ export interface components {
          * @enum {string}
          */
         DesiredState: "running" | "stopped";
+        /** @description What one revision of a change changes, relative to where it forked from the target branch. */
+        DiffResource: {
+            /** @description The commit the diff starts from: the revision's base. */
+            base: string;
+            /** @description The files that differ, sorted by path. */
+            files: components["schemas"]["FileDiffResource"][];
+            /** @description The commit the diff ends at: the revision's head. */
+            head: string;
+            /**
+             * Format: int32
+             * @description The revision, from 1.
+             */
+            revision: number;
+        };
         /**
          * @description What `GET /v1/events` sends as the `data` of each server-sent event: which resource changed
          *     and when, never the domain payload. Clients refetch the resource.
@@ -862,6 +897,43 @@ export interface components {
             field: string;
             /** @description Why it is invalid. */
             message: string;
+        };
+        /**
+         * @description How a file differs in a change's diff.
+         * @enum {string}
+         */
+        FileChangeStatus: "added" | "modified" | "deleted" | "renamed";
+        /**
+         * @description One file of a change's diff.
+         *
+         *     A file has a `patch` unless it is binary or `truncated`.
+         */
+        FileDiffResource: {
+            /**
+             * Format: int64
+             * @description Lines added; 0 for a binary file.
+             */
+            additions: number;
+            /** @description Whether the file is binary. */
+            binary: boolean;
+            /**
+             * Format: int64
+             * @description Lines removed; 0 for a binary file.
+             */
+            deletions: number;
+            /**
+             * @description The unified patch exactly as git prints it, from its `diff --git` header on. Absent for
+             *     a binary file and when `truncated`.
+             */
+            patch?: string | null;
+            /** @description Its path after the change; for a deleted file, the path it had. */
+            path: string;
+            /** @description The path a renamed file had before. */
+            previous_path?: string | null;
+            /** @description How it differs. */
+            status: components["schemas"]["FileChangeStatus"];
+            /** @description Whether the patch was left out for exceeding [`FileDiffResource::MAX_PATCH_BYTES`]. */
+            truncated: boolean;
         };
         /** @description Imports a public OCI image as a snapshot. */
         ImportImageRequest: {
@@ -1345,12 +1417,46 @@ export interface components {
             schedulability: components["schemas"]["WorkerSchedulability"];
             /** @description Whether new work may be placed on it now: connected and schedulable. */
             schedulable: boolean;
+            usage?: components["schemas"]["WorkerUsage"] | null;
         };
         /**
          * @description Whether new work may be placed on a worker.
          * @enum {string}
          */
         WorkerSchedulability: "schedulable" | "draining";
+        /** @description What a worker last reported holding of its machine. */
+        WorkerUsage: {
+            /**
+             * Format: int64
+             * @description Free bytes of that file system.
+             */
+            disk_free_bytes: number;
+            /**
+             * Format: int64
+             * @description Total bytes of the file system holding its data directory.
+             */
+            disk_total_bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes its layer cache holds.
+             */
+            layer_cache_bytes: number;
+            /**
+             * Format: int64
+             * @description The budget above which its unpinned layers are evicted.
+             */
+            layer_cache_limit_bytes: number;
+            /**
+             * Format: date-time
+             * @description When the server received the report.
+             */
+            reported_at: string;
+            /**
+             * Format: int32
+             * @description Sandboxes it holds, starting or ready.
+             */
+            sandboxes: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -1602,6 +1708,37 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getChangeDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                /** @description The revision, from 1; the latest when omitted. */
+                revision: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffResource"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

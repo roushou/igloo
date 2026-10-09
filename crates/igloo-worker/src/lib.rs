@@ -12,6 +12,7 @@ mod rootfs;
 mod runtime;
 mod seal;
 mod store;
+mod usage;
 mod worker;
 
 #[cfg(test)]

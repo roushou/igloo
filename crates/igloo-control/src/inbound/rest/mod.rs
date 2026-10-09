@@ -43,7 +43,7 @@ use crate::ci::{Merger, Run, RunQueries};
 use crate::inbound::BlobUrls;
 use crate::platform::{
     BuildQueries, ChangeHeads, ChangeQueries, ImageImporter, RepoQueries, RepoSnapshots,
-    SandboxQueries, Snapshots,
+    SandboxQueries, Snapshots, WorkerUsages,
 };
 use crate::ports::{
     BlobStore, Clock, EntityStore, EventLog, Forge, IdGenerator, IdempotencyStore, LogStore,
@@ -61,6 +61,7 @@ pub(crate) struct ApiState {
     jobs: Arc<dyn EntityStore<Job>>,
     seals: Arc<dyn EntityStore<Seal>>,
     workers: Arc<dyn EntityStore<Worker>>,
+    usages: WorkerUsages,
     repos: RepoQueries,
     changes: ChangeQueries,
     change_heads: ChangeHeads,
@@ -133,6 +134,7 @@ impl RestApi {
                 jobs: platform.store::<Job>()?,
                 seals: platform.store::<Seal>()?,
                 workers: platform.store::<Worker>()?,
+                usages: WorkerUsages::new(),
                 repos: RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
                 changes: ChangeQueries::new(platform.store::<Change>()?),
                 runs: RunQueries::new(platform.store::<Run>()?),
@@ -169,6 +171,13 @@ impl RestApi {
                 max_blob_bytes: Self::DEFAULT_MAX_BLOB_BYTES,
             },
         })
+    }
+
+    /// Reads worker usage reports from `usages`, the ones a gateway given the same handle keeps.
+    #[must_use]
+    pub fn with_usages(mut self, usages: WorkerUsages) -> Self {
+        self.state.usages = usages;
+        self
     }
 
     /// Limits uploaded blobs to `bytes`.
@@ -218,6 +227,7 @@ impl RestApi {
             .routes(routes!(repos::snapshot))
             .routes(routes!(changes::open, changes::list))
             .routes(routes!(changes::get))
+            .routes(routes!(changes::diff))
             .routes(routes!(changes::revise))
             .routes(routes!(changes::close))
             .routes(routes!(changes::approve))

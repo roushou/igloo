@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::State;
-use igloo_api::worker::{WorkerAllocation, WorkerResource};
+use igloo_api::worker::{WorkerAllocation, WorkerResource, WorkerUsage};
 use igloo_core::sandbox::Sandbox;
 use igloo_core::worker::Worker;
 use igloo_core::{Entity, Labels, Resource};
@@ -31,7 +31,13 @@ pub(super) async fn list(
     let resources = workers
         .iter()
         .map(|worker| {
-            WorkerResource::from(worker).with_allocation(Allocation::of(worker, &sandboxes).into())
+            let usage = state
+                .usages
+                .latest(worker.id())
+                .map(|(usage, at)| WorkerUsage::new(&usage, at));
+            WorkerResource::from(worker)
+                .with_allocation(Allocation::of(worker, &sandboxes).into())
+                .with_usage(usage)
         })
         .collect();
     Ok(Json(resources))

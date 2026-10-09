@@ -10,6 +10,7 @@ mod sandbox;
 mod seal;
 mod snapshot;
 mod trust;
+mod usage;
 mod worker;
 
 #[cfg(test)]
@@ -41,6 +42,7 @@ pub use snapshot::{
     ImageImporter, RegisterSnapshot, SnapshotError, SnapshotModule, Snapshots, StoreBlob,
 };
 pub use trust::TrustSettings;
+pub use usage::WorkerUsages;
 pub use worker::{
     ConnectWorker, DisconnectWorker, DrainWorker, MarkWorkerLost, RegisterWorker, WorkerModule,
 };

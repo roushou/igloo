@@ -348,3 +348,124 @@ impl ApprovalNeed {
         }
     }
 }
+
+/// How a file differs in a change's diff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FileChangeStatus {
+    /// Absent before, present after.
+    Added,
+    /// Present in both with different content, mode or kind.
+    Modified,
+    /// Present before, absent after.
+    Deleted,
+    /// Moved from `previous_path`, possibly with changes.
+    Renamed,
+}
+
+/// One file of a change's diff.
+///
+/// A file has a `patch` unless it is binary or `truncated`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct FileDiffResource {
+    /// Its path after the change; for a deleted file, the path it had.
+    pub path: String,
+    /// The path a renamed file had before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_path: Option<String>,
+    /// How it differs.
+    pub status: FileChangeStatus,
+    /// Lines added; 0 for a binary file.
+    pub additions: u64,
+    /// Lines removed; 0 for a binary file.
+    pub deletions: u64,
+    /// Whether the file is binary.
+    pub binary: bool,
+    /// Whether the patch was left out for exceeding [`FileDiffResource::MAX_PATCH_BYTES`].
+    pub truncated: bool,
+    /// The unified patch exactly as git prints it, from its `diff --git` header on. Absent for
+    /// a binary file and when `truncated`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
+}
+
+impl FileDiffResource {
+    /// The longest patch returned, in bytes.
+    pub const MAX_PATCH_BYTES: usize = 256 * 1024;
+
+    /// A file with no patch yet: neither binary nor truncated.
+    #[must_use]
+    pub fn new(
+        path: impl Into<String>,
+        previous_path: Option<String>,
+        status: FileChangeStatus,
+        additions: u64,
+        deletions: u64,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            previous_path,
+            status,
+            additions,
+            deletions,
+            binary: false,
+            truncated: false,
+            patch: None,
+        }
+    }
+
+    /// Marks the file binary: it has no patch.
+    #[must_use]
+    pub const fn binary(mut self) -> Self {
+        self.binary = true;
+        self
+    }
+
+    /// Gives the file `patch`, or marks it truncated and leaves the patch out when it exceeds
+    /// [`FileDiffResource::MAX_PATCH_BYTES`].
+    #[must_use]
+    pub fn with_patch(mut self, patch: String) -> Self {
+        if patch.len() > Self::MAX_PATCH_BYTES {
+            self.truncated = true;
+        } else {
+            self.patch = Some(patch);
+        }
+        self
+    }
+}
+
+/// What one revision of a change changes, relative to where it forked from the target branch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct DiffResource {
+    /// The revision, from 1.
+    pub revision: u32,
+    /// The commit the diff starts from: the revision's base.
+    pub base: String,
+    /// The commit the diff ends at: the revision's head.
+    pub head: String,
+    /// The files that differ, sorted by path.
+    pub files: Vec<FileDiffResource>,
+}
+
+impl DiffResource {
+    /// The diff of `revision` with `files`.
+    #[must_use]
+    pub fn new(revision: &Revision, files: Vec<FileDiffResource>) -> Self {
+        Self {
+            revision: revision.number,
+            base: revision.base.to_string(),
+            head: revision.head.to_string(),
+            files,
+        }
+    }
+}
+
+/// Which revision of a change a diff is of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, utoipa::IntoParams)]
+pub struct DiffQuery {
+    /// The revision, from 1; the latest when omitted.
+    pub revision: Option<u32>,
+}

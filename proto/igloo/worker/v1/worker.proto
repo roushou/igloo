@@ -19,6 +19,7 @@ message ConnectRequest {
     LogChunk log_chunk = 5;
     JobResult job_result = 6;
     SealFailed seal_failed = 7;
+    Usage usage = 8;
   }
 }
 
@@ -41,6 +42,8 @@ message Hello {
   uint32 protocol_version = 2;
   Capabilities capabilities = 3;
   map<string, string> labels = 4;
+  // The worker's usage at connection time. Absent from workers that predate it.
+  Usage usage = 5;
 }
 
 message Capabilities {
@@ -66,6 +69,19 @@ enum Runtime {
   RUNTIME_PROCESS = 1;
   RUNTIME_OCI = 2;
   RUNTIME_FIRECRACKER = 3;
+}
+
+// What the worker holds of its machine. Sent in the Hello and then every 30 seconds; the server
+// keeps the latest. All sizes are bytes.
+message Usage {
+  // Total and free space of the file system holding the worker's data directory.
+  uint64 disk_total_bytes = 1;
+  uint64 disk_free_bytes = 2;
+  // Bytes the layer cache holds, and the budget above which unpinned layers are evicted.
+  uint64 layer_cache_bytes = 3;
+  uint64 layer_cache_limit_bytes = 4;
+  // Sandboxes the worker holds, starting or ready.
+  uint32 sandboxes = 5;
 }
 
 // Accepts the worker. It stores worker_id and sends it in every later Hello.

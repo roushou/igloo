@@ -30,7 +30,7 @@ use crate::app::{AppError, CommandBus, ControllerSettings, TaskSupervisor};
 use crate::inbound::rest::{DevToken, RestApi};
 use crate::platform::{
     CancelJob, CreateSandbox, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule,
-    SubmitJob, WorkerModule,
+    SubmitJob, WorkerModule, WorkerUsages,
 };
 use crate::platform::{RegisterRepo, SetSecret};
 use crate::testing::{
@@ -71,6 +71,7 @@ impl Harness {
         builder.install(RepoModule).expect("repo module");
         let supervisor = TaskSupervisor::new();
         let urls = blob_urls(Arc::clone(&builder.ports().clock));
+        let usages = WorkerUsages::new();
         let gateway = Gateway::new(
             &builder,
             builder.bus(),
@@ -79,7 +80,8 @@ impl Harness {
             urls.clone(),
         )
         .expect("gateway")
-        .with_lease_ttl(lease_ttl);
+        .with_lease_ttl(lease_ttl)
+        .with_usages(usages.clone());
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(7)),
         };
@@ -90,6 +92,7 @@ impl Harness {
             urls,
         )
         .expect("rest api")
+        .with_usages(usages)
         .router();
         let bus = builder.build().start(&supervisor);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -224,6 +227,7 @@ fn hello(worker_id: &str, protocol_version: u32) -> v1::Hello {
         protocol_version,
         capabilities: Some(v1::Capabilities::from(&capabilities)),
         labels: [("host".to_owned(), "test".to_owned())].into(),
+        usage: None,
     }
 }
 
@@ -746,5 +750,65 @@ async fn a_sandbox_starts_with_its_snapshots_environment_under_its_own() {
         Some("/opt/tool/bin:/bin")
     );
     assert_eq!(env.get("MODE").map(String::as_str), Some("sandbox"));
+    harness.stop().await;
+}
+
+fn usage(free: u64, sandboxes: u32) -> v1::Usage {
+    v1::Usage {
+        disk_total_bytes: 1000,
+        disk_free_bytes: free,
+        layer_cache_bytes: 300,
+        layer_cache_limit_bytes: 500,
+        sandboxes,
+    }
+}
+
+impl Harness {
+    /// The `usage` object of the only worker on `GET /v1/workers`.
+    async fn worker_usage(&self) -> serde_json::Value {
+        let (status, body) = self.call("GET", "/v1/workers", Vec::new()).await;
+        assert_eq!(status, 200);
+        let workers: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        workers[0].get("usage").cloned().unwrap_or_default()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workers_usage_appears_on_the_worker_list_and_follows_its_reports() {
+    let harness = Harness::start().await;
+    let mut registering = hello("", 1);
+    registering.usage = Some(usage(400, 1));
+    let mut client = harness
+        .connect(JOIN_TOKEN, registering)
+        .await
+        .expect("connected");
+    client.next().await;
+    wait_until(|| async { !harness.worker_usage().await.is_null() }).await;
+    let reported = harness.worker_usage().await;
+    assert_eq!(reported["disk_total_bytes"], 1000);
+    assert_eq!(reported["disk_free_bytes"], 400);
+    assert_eq!(reported["layer_cache_bytes"], 300);
+    assert_eq!(reported["layer_cache_limit_bytes"], 500);
+    assert_eq!(reported["sandboxes"], 1);
+    assert!(reported["reported_at"].is_string());
+
+    client.send(Inbound::Usage(usage(250, 2))).await;
+    wait_until(|| async { harness.worker_usage().await["disk_free_bytes"] == 250 }).await;
+    assert_eq!(harness.worker_usage().await["sandboxes"], 2);
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_worker_that_reports_no_usage_is_accepted_and_listed_without_it() {
+    let harness = Harness::start().await;
+    let mut client = harness
+        .connect(JOIN_TOKEN, hello("", 1))
+        .await
+        .expect("an older worker connects");
+    client.next().await;
+    let (_, body) = harness.call("GET", "/v1/workers", Vec::new()).await;
+    let workers: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(workers.as_array().map(Vec::len), Some(1));
+    assert!(workers[0].get("usage").is_none());
     harness.stop().await;
 }
