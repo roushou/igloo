@@ -540,6 +540,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Streams a notice per committed event as server-sent events: `id` is the event's sequence,
+         *     `event` its kind, `data` an `EventNotice`. `repo` keeps only events of that repository's
+         *     resources. `after`, or else `Last-Event-ID`, resumes after that sequence; without either the stream
+         *     starts at the log's current head and sends only events committed after it opened, and
+         *     `after=0` replays everything. Events are sent in sequence order, each once. Comments keep the connection alive every 15 seconds.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only events of this repository's resources */
+                    repo?: string;
+                    /** @description Resume after this sequence; 0 replays the whole log; the current head when absent */
+                    after?: number;
+                };
+                header?: {
+                    /** @description Resume after this sequence when `after` is absent */
+                    "Last-Event-ID"?: number | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": components["schemas"]["EventNotice"];
+                    };
+                };
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/jobs/{id}": {
         parameters: {
             query?: never;
@@ -2037,6 +2094,30 @@ export interface components {
          * @enum {string}
          */
         DesiredState: "running" | "stopped";
+        /**
+         * @description What `GET /v1/events` sends as the `data` of each server-sent event: which resource changed
+         *     and when, never the domain payload. Clients refetch the resource.
+         */
+        EventNotice: {
+            /** @description The event kind, such as `igloo.run.passed`; also the SSE `event`. */
+            kind: string;
+            /** @description The repository the resource belongs to, when it has one. */
+            repo?: string | null;
+            /** @description The resource's id, such as `run_...`. */
+            resource_id: string;
+            /** @description The kind of resource the event belongs to, such as `run`. */
+            resource_type: string;
+            /**
+             * Format: int64
+             * @description The event's position in the global log; also the SSE `id`.
+             */
+            sequence: number;
+            /**
+             * Format: date-time
+             * @description When the event was committed.
+             */
+            time: string;
+        };
         /** @description Runs a process in a sandbox. */
         ExecRequest: {
             /** @description The program and its arguments. */

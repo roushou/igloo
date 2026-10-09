@@ -35,6 +35,29 @@ export class ApiClient {
     return data;
   }
 
+  /**
+   * Opens the event stream, resuming after event `lastId` when given. A 401 is handled like any
+   * other request; any other failure rejects.
+   */
+  async events(lastId: string | null, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    const headers = new Headers({ Accept: "text/event-stream" });
+    const token = this.tokens.get();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (lastId !== null) headers.set("Last-Event-ID", lastId);
+    const response = await fetch(new URL("/v1/events", window.location.origin), {
+      headers,
+      signal,
+    });
+    if (response.status === 401) {
+      this.tokens.clear();
+      this.onUnauthorized();
+    }
+    if (!response.ok || !response.body) {
+      throw new Error(`event stream answered ${response.status}`);
+    }
+    return response.body;
+  }
+
   /** Checks `token` with `GET /v1/repos` without storing it or triggering the 401 handler. */
   async check(token: string): Promise<TokenCheck> {
     try {

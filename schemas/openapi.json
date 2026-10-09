@@ -553,6 +553,71 @@
         }
       }
     },
+    "/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Streams a notice per committed event as server-sent events: `id` is the event's sequence,\n`event` its kind, `data` an `EventNotice`. `repo` keeps only events of that repository's\nresources. `after`, or else `Last-Event-ID`, resumes after that sequence; without either the stream\nstarts at the log's current head and sends only events committed after it opened, and\n`after=0` replays everything. Events are sent in sequence order, each once. Comments keep the connection alive every 15 seconds.",
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "description": "Only events of this repository's resources",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Resume after this sequence; 0 replays the whole log; the current head when absent",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "Resume after this sequence when `after` is absent",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventNotice"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/jobs/{id}": {
       "get": {
         "tags": [
@@ -2280,6 +2345,49 @@
           "running",
           "stopped"
         ]
+      },
+      "EventNotice": {
+        "type": "object",
+        "description": "What `GET /v1/events` sends as the `data` of each server-sent event: which resource changed\nand when, never the domain payload. Clients refetch the resource.",
+        "required": [
+          "sequence",
+          "kind",
+          "resource_type",
+          "resource_id",
+          "time"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "The event kind, such as `igloo.run.passed`; also the SSE `event`."
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository the resource belongs to, when it has one."
+          },
+          "resource_id": {
+            "type": "string",
+            "description": "The resource's id, such as `run_...`."
+          },
+          "resource_type": {
+            "type": "string",
+            "description": "The kind of resource the event belongs to, such as `run`."
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The event's position in the global log; also the SSE `id`.",
+            "minimum": 0
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the event was committed."
+          }
+        }
       },
       "ExecRequest": {
         "type": "object",

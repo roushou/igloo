@@ -8,6 +8,7 @@
 //! own.
 
 pub mod change;
+pub mod event;
 pub mod job;
 pub mod problem;
 pub mod repo;

@@ -593,3 +593,221 @@ fn the_committed_openapi_document_is_current() {
         "schemas/openapi.json is stale; run UPDATE_SCHEMAS=1 cargo nextest run -p igloo-control"
     );
 }
+
+/// One parsed server-sent event.
+#[derive(Debug)]
+struct Frame {
+    id: String,
+    event: String,
+    data: Value,
+}
+
+/// A server-sent event stream read frame by frame.
+struct Sse {
+    body: axum::body::BodyDataStream,
+    buffer: String,
+}
+
+impl Sse {
+    async fn open(router: &Router, uri: &str, headers: &[(&'static str, &str)]) -> Self {
+        let mut request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = router
+            .clone()
+            .oneshot(request.body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        Self {
+            body: response.into_body().into_data_stream(),
+            buffer: String::new(),
+        }
+    }
+
+    /// The next event, or `None` when nothing arrives within `wait`.
+    async fn next(&mut self, wait: std::time::Duration) -> Option<Frame> {
+        use futures_util::StreamExt;
+        loop {
+            if let Some((block, rest)) = self.buffer.split_once("\n\n") {
+                let block = block.to_owned();
+                self.buffer = rest.to_owned();
+                let field = |name: &str| {
+                    block
+                        .lines()
+                        .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
+                        .map(|value| value.trim_start().to_owned())
+                };
+                if let (Some(id), Some(event), Some(data)) =
+                    (field("id"), field("event"), field("data"))
+                {
+                    let data = serde_json::from_str(&data).expect("json data");
+                    return Some(Frame { id, event, data });
+                }
+                continue;
+            }
+            let chunk = tokio::time::timeout(wait, self.body.next()).await.ok()??;
+            self.buffer
+                .push_str(&String::from_utf8_lossy(&chunk.expect("chunk")));
+        }
+    }
+
+    /// Every event that arrives until the stream is quiet.
+    async fn drain(&mut self) -> Vec<Frame> {
+        let mut frames = Vec::new();
+        while let Some(frame) = self.next(std::time::Duration::from_millis(200)).await {
+            frames.push(frame);
+        }
+        frames
+    }
+}
+
+async fn register(router: &Router, location: &str) -> String {
+    let (status, repo, _) = Call::new(Method::POST, "/v1/repos")
+        .json(&json!({ "location": location }))
+        .send(router)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{repo}");
+    repo["id"].as_str().expect("id").to_owned()
+}
+
+#[tokio::test]
+async fn the_event_stream_resumes_after_the_last_event_in_order_and_once() {
+    let router = api();
+    register(&router, "github.com/roushou/igloo").await;
+    let snapshot = snapshot(&router).await;
+    create_sandbox(&router, &snapshot, &json!({})).await;
+    register(&router, "github.com/roushou/other").await;
+
+    let all = Sse::open(&router, "/v1/events?after=0", &[])
+        .await
+        .drain()
+        .await;
+    let ids: Vec<u64> = all.iter().map(|f| f.id.parse().expect("id")).collect();
+    assert_eq!(ids.len(), 3, "{all:?}");
+    assert!(ids.is_sorted_by(|a, b| a < b), "{ids:?}");
+    assert!(all.iter().all(|f| f.event == f.data["kind"]));
+    assert!(
+        all.iter()
+            .all(|f| f.data["sequence"] == f.id.parse::<u64>().expect("id"))
+    );
+
+    let cut = &all[0];
+    let rest = Sse::open(&router, "/v1/events", &[("last-event-id", &cut.id)])
+        .await
+        .drain()
+        .await;
+    let expected: Vec<&str> = all[1..].iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(
+        rest.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+        expected
+    );
+    let after = Sse::open(&router, &format!("/v1/events?after={}", cut.id), &[])
+        .await
+        .drain()
+        .await;
+    assert_eq!(after.len(), expected.len());
+}
+
+#[tokio::test]
+async fn the_event_stream_can_be_limited_to_one_repository() {
+    let router = api();
+    let first = register(&router, "github.com/roushou/igloo").await;
+    let snapshot = snapshot(&router).await;
+    let sandbox = create_sandbox(&router, &snapshot, &json!({})).await;
+    let second = register(&router, "github.com/roushou/other").await;
+
+    let events = Sse::open(&router, &format!("/v1/events?after=0&repo={first}"), &[])
+        .await
+        .drain()
+        .await;
+    assert!(!events.is_empty());
+    for frame in &events {
+        assert_eq!(frame.data["repo"], first, "{frame:?}");
+        assert_eq!(frame.data["resource_type"], "repo");
+        assert_eq!(frame.data["resource_id"], first);
+        assert!(frame.data.get("payload").is_none());
+    }
+    let everything = Sse::open(&router, "/v1/events?after=0", &[])
+        .await
+        .drain()
+        .await;
+    assert!(everything.iter().any(|f| f.data["repo"] == second));
+    let unscoped = everything
+        .iter()
+        .find(|f| f.data["resource_id"] == sandbox)
+        .expect("sandbox event");
+    assert_eq!(unscoped.data["resource_type"], "sandbox");
+    assert!(unscoped.data.get("repo").is_none());
+
+    let (status, body, _) = Call::new(Method::GET, "/v1/events?repo=nope")
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, _, _) = Call::new(Method::GET, "/v1/events?after=x")
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _, _) = Call::new(Method::GET, "/v1/events")
+        .anonymous()
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_commands_event_reaches_a_connected_client() {
+    let router = api();
+    let mut stream = Sse::open(&router, "/v1/events?after=0", &[]).await;
+    assert!(
+        stream
+            .next(std::time::Duration::from_millis(100))
+            .await
+            .is_none()
+    );
+    let repo = register(&router, "github.com/roushou/igloo").await;
+    let frame = stream
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the event arrives");
+    assert_eq!(frame.data["resource_id"], repo);
+}
+
+#[tokio::test]
+async fn a_stream_without_a_cursor_starts_at_the_head() {
+    let router = api();
+    register(&router, "github.com/roushou/igloo").await;
+    register(&router, "github.com/roushou/other").await;
+
+    let mut stream = Sse::open(&router, "/v1/events", &[]).await;
+    assert!(
+        stream
+            .next(std::time::Duration::from_millis(200))
+            .await
+            .is_none(),
+        "events committed before the stream opened are not replayed"
+    );
+    let third = register(&router, "github.com/roushou/third").await;
+    let frame = stream
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the new event arrives");
+    assert_eq!(frame.data["resource_id"], third);
+    assert_eq!(frame.id, "3");
+    assert!(
+        stream
+            .next(std::time::Duration::from_millis(200))
+            .await
+            .is_none()
+    );
+
+    let history = Sse::open(&router, "/v1/events?after=0", &[])
+        .await
+        .drain()
+        .await;
+    assert_eq!(history.len(), 3);
+}

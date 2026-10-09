@@ -4,6 +4,7 @@
 mod auth;
 mod blobs;
 pub(super) mod changes;
+mod events;
 mod idempotency;
 mod jobs;
 mod problem;
@@ -32,6 +33,7 @@ use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use self::events::EventRepos;
 use self::idempotency::Idempotency;
 use crate::agents::{Task, TaskQueries, Transcripts};
 use crate::app::{CommandBus, InstallError, PlatformBuilder};
@@ -72,6 +74,7 @@ pub(crate) struct ApiState {
     blobs: Arc<dyn BlobStore>,
     logs: Arc<dyn LogStore>,
     events: Arc<dyn EventLog>,
+    event_repos: EventRepos,
     pub(super) ids: Arc<dyn IdGenerator>,
     pub(super) auth: DevToken,
     blob_urls: BlobUrls,
@@ -152,6 +155,7 @@ impl RestApi {
                 blobs: Arc::clone(&ports.blobs),
                 logs: Arc::clone(&ports.logs),
                 events: Arc::clone(&ports.events),
+                event_repos: EventRepos::new(platform)?,
                 ids: Arc::clone(&ports.ids),
                 auth,
                 blob_urls,
@@ -221,5 +225,6 @@ impl RestApi {
             .routes(routes!(tasks::get))
             .routes(routes!(tasks::cancel))
             .routes(routes!(tasks::transcript))
+            .routes(routes!(events::stream))
     }
 }
