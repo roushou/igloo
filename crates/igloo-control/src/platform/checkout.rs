@@ -14,7 +14,8 @@ use crate::ports::{BlobStore, Forge, ForgeError, StorageError};
 /// Snapshots of repositories at commits: a base snapshot (such as an imported image) and a
 /// layer holding the checkout under `workspace/`, with a shallow `.git` at the commit. Over a
 /// warm snapshot, the layer also deletes the files removed since the warm snapshot's commit and
-/// replaces its `.git`.
+/// replaces its `.git`. Layer entries are owned by root, with fixed times and modes that keep
+/// only the executable bit, whoever the server runs as.
 #[derive(Clone)]
 pub struct RepoSnapshots {
     forge: Arc<dyn Forge>,
@@ -115,6 +116,7 @@ impl RepoSnapshots {
     ) -> io::Result<Digest> {
         let file = std::fs::File::create(archive)?;
         let mut builder = tar::Builder::new(io::BufWriter::new(file));
+        builder.mode(tar::HeaderMode::Deterministic);
         builder.follow_symlinks(false);
         builder.append_dir_all(Self::ROOT, tree)?;
         for path in deleted {
@@ -180,4 +182,40 @@ impl igloo_core::ErrorCode for ForgeError {
 
 fn storage(error: impl std::error::Error + Send + Sync + 'static) -> AppError {
     AppError::from(StorageError::backend(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn layers_are_owned_by_root_and_keep_the_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("dir");
+        let tree = dir.path().join("tree");
+        std::fs::create_dir_all(tree.join("bin")).expect("tree");
+        std::fs::write(tree.join("README"), "read me").expect("file");
+        std::fs::write(tree.join("bin/run"), "#!/bin/sh\n").expect("script");
+        std::fs::set_permissions(tree.join("bin/run"), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod");
+        let archive = dir.path().join("layer.tar");
+        RepoSnapshots::pack(&tree, &[], false, &archive).expect("pack");
+
+        let mut entries = tar::Archive::new(std::fs::File::open(&archive).expect("open"));
+        let mut modes = std::collections::BTreeMap::new();
+        for entry in entries.entries().expect("entries") {
+            let entry = entry.expect("entry");
+            let header = entry.header();
+            assert_eq!(
+                (header.uid().expect("uid"), header.gid().expect("gid")),
+                (0, 0)
+            );
+            let path = entry.path().expect("path").display().to_string();
+            modes.insert(path, header.mode().expect("mode") & 0o777);
+        }
+        assert_eq!(modes.get("workspace/README"), Some(&0o644));
+        assert_eq!(modes.get("workspace/bin/run"), Some(&0o755));
+    }
 }
