@@ -11,7 +11,7 @@ run = "ssh -t $IGLOO_VPS \"cd $IGLOO_VPS_DIR && git pull --ff-only && ./deploy/v
 
 [tasks.tunnel]
 description = "Forward the host's Igloo API and MCP to http://127.0.0.1:7000"
-run = "ssh -N -L 7000:127.0.0.1:7000 $IGLOO_VPS"
+run = "ssh -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -L 7000:127.0.0.1:7000 $IGLOO_VPS"
 
 [tasks.token]
 description = "Print the host's API token"
