@@ -12,7 +12,7 @@ use igloo_core::{Actor, Digest, Entity, SystemComponent, ValidationErrors};
 use jiff::SignedDuration;
 
 use super::AgentSettings;
-use super::bundle::CommitBundle;
+use super::bundle::{CommitBundle, GitIdentity};
 use super::commands::{
     FailTask, RecordCommitsCollecting, RecordTaskBuilding, RecordTaskPrepared, RecordTaskReady,
     RecordTaskRevised, RecordTaskSandbox, RecordTaskSandboxStopped, RecordTurnStarted,
@@ -258,12 +258,16 @@ impl Agent {
             .harness()
             .turn(&prepared.spec, &prompt, !task.turns().is_empty())
             .map_err(AppError::Validation)?;
+        let env = BTreeMap::from(turn.env)
+            .into_iter()
+            .chain(GitIdentity::of(&prepared.tool).env())
+            .collect::<BTreeMap<_, _>>();
         let job = self
             .dispatch(SubmitJob {
                 spec: JobSpec::Execute {
                     sandbox,
                     argv: turn.argv,
-                    env: turn.env,
+                    env: EnvVars::try_from(env).map_err(AppError::Validation)?,
                     secrets: prepared.spec.secrets.clone(),
                     timeout: Self::timeout(prepared.spec.timeout_seconds)?,
                 },
@@ -291,12 +295,13 @@ impl Agent {
         .map_err(|error| {
             AppError::Validation(ValidationErrors::single("argv", error.to_string()))
         })?;
-        let env = CommitBundle::IDENTITY
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        let env = GitIdentity::of(&prepared.tool)
+            .env()
+            .into_iter()
             .chain([
                 (CommitBundle::BASE.to_owned(), prepared.commit.to_string()),
                 (CommitBundle::MESSAGE.to_owned(), Self::title(task)),
+                (CommitBundle::TASK.to_owned(), task.id().to_string()),
             ])
             .collect::<BTreeMap<_, _>>();
         let job = self

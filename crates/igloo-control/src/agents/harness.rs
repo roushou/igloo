@@ -4,7 +4,6 @@ use igloo_core::ValidationErrors;
 use igloo_core::process::{Argv, EnvVars};
 use serde_json::Value;
 
-use super::bundle::CommitBundle;
 use super::transcript::Entry;
 use super::{HarnessKind, ToolSpec};
 
@@ -24,7 +23,7 @@ pub trait Harness: Send + Sync {
 }
 
 /// The process of one turn: a shell script with the prompt in `IGLOO_PROMPT`, so prompts never
-/// need quoting.
+/// need quoting. The task adds its git identity to the environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnCommand {
     /// The program and its arguments.
@@ -50,12 +49,10 @@ impl TurnCommand {
     pub fn new(script: String, prompt: &str) -> Result<Self, ValidationErrors> {
         let argv = Argv::try_from(vec!["sh".to_owned(), "-c".to_owned(), script])
             .map_err(|error| ValidationErrors::single("argv", error.to_string()))?;
-        let env = CommitBundle::IDENTITY
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-            .chain([(Self::PROMPT.to_owned(), prompt.to_owned())])
-            .collect::<BTreeMap<_, _>>();
-        let env = EnvVars::try_from(env)?;
+        let env = EnvVars::try_from(BTreeMap::from([(
+            Self::PROMPT.to_owned(),
+            prompt.to_owned(),
+        )]))?;
         Ok(Self { argv, env })
     }
 }
@@ -217,7 +214,6 @@ mod tests {
             turn.env.iter().find(|(key, _)| *key == "IGLOO_PROMPT"),
             Some(("IGLOO_PROMPT", "it's \"quoted\""))
         );
-        assert!(turn.env.iter().any(|(key, _)| key == "GIT_AUTHOR_NAME"));
     }
 
     #[test]
