@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use igloo_core::repo::{BranchName, CommitId};
 
-use crate::commit::Commit;
+use crate::commit::{Commit, Signature};
 use crate::config::ConfigKey;
 use crate::diff::{DiffEntry, DiffStatus};
 use crate::error::GitError;
@@ -87,6 +87,60 @@ impl Repository {
         Self::parse_commits(&output)?
             .pop()
             .ok_or_else(|| output.unexpected("no commit printed"))
+    }
+
+    /// The author of commit `id`.
+    pub async fn author(&self, id: &CommitId) -> Result<Signature, GitError> {
+        let output = self
+            .invoke("log")
+            .arg("-1")
+            .arg("--no-color")
+            .arg("--encoding=UTF-8")
+            .arg("--format=%an%x00%ae%x00%at")
+            .arg(id.as_str())
+            .arg("--")
+            .run()
+            .await?;
+        let text = output.text()?;
+        let mut fields = text.split('\0');
+        match (
+            fields.next(),
+            fields.next(),
+            fields.next().map(str::parse::<i64>),
+        ) {
+            (Some(name), Some(email), Some(Ok(seconds))) => {
+                Ok(Signature::new(name, email, seconds))
+            }
+            _ => Err(output.unexpected(format!("not an author: {text}"))),
+        }
+    }
+
+    /// Creates a commit holding `tree_of`'s tree with the single parent `parent` and `message`,
+    /// by `author` and `committer`; returns it. Equal inputs give the same commit.
+    pub async fn commit_tree(
+        &self,
+        tree_of: &CommitId,
+        parent: &CommitId,
+        message: &str,
+        author: &Signature,
+        committer: &Signature,
+    ) -> Result<CommitId, GitError> {
+        let output = self
+            .invoke("commit-tree")
+            .arg(format!("{tree_of}^{{tree}}"))
+            .arg("-p")
+            .arg(parent.as_str())
+            .arg("-m")
+            .arg(message)
+            .env("GIT_AUTHOR_NAME", author.name())
+            .env("GIT_AUTHOR_EMAIL", author.email())
+            .env("GIT_AUTHOR_DATE", author.date())
+            .env("GIT_COMMITTER_NAME", committer.name())
+            .env("GIT_COMMITTER_EMAIL", committer.email())
+            .env("GIT_COMMITTER_DATE", committer.date())
+            .run()
+            .await?;
+        Self::parse_commit(&output)
     }
 
     /// The commits reachable from `to` and not from `from`, oldest first.
@@ -709,6 +763,45 @@ mod tests {
         assert!(
             matches!(garbage, Err(GitError::Failed { .. })),
             "{garbage:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_squash_commit_holds_the_tree_on_one_parent_and_is_deterministic() {
+        let dir = tempfile::tempdir().expect("dir");
+        let fixture = Fixture::new(dir.path());
+        let base = fixture.commit("base", &[("keep", Some("1"))]);
+        fixture.commit("one", &[("a", Some("a"))]);
+        let head = fixture.commit("two", &[("b", Some("b"))]);
+        let repo = Git::isolated().open(fixture.origin()).await.expect("open");
+
+        let author = repo.author(&head).await.expect("author").at(1_700_000_000);
+        let committer = Signature::new("Igloo", "igloo@igloo.invalid", 1_700_000_000);
+        let squash = || repo.commit_tree(&head, &base, "Squashed\n\nbody", &author, &committer);
+        let commit = squash().await.expect("commit-tree");
+        assert_eq!(
+            squash().await.expect("again"),
+            commit,
+            "equal inputs, same commit"
+        );
+
+        assert_eq!(repo.diff(&head, &commit).await.expect("diff"), []);
+        let parents = fixture.git(&[
+            "-C",
+            &fixture.origin().display().to_string(),
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            commit.as_str(),
+        ]);
+        assert_eq!(parents, format!("{commit} {base}"));
+        let squashed = repo.commit(&commit).await.expect("commit");
+        assert_eq!(squashed.message(), "Squashed\n\nbody");
+        let recorded = repo.author(&commit).await.expect("author");
+        assert_eq!(
+            (recorded.name(), recorded.seconds()),
+            (author.name(), 1_700_000_000)
         );
     }
 }

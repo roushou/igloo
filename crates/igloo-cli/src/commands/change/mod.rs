@@ -45,7 +45,7 @@ enum ChangeCommand {
     /// Approves a change's latest revision.
     Approve(approve::Approve),
     /// Merges a change once its checks passed and, for protected paths, a human approved it;
-    /// Igloo pushes the target branch.
+    /// Igloo pushes it to the target branch as one squashed commit.
     Merge(merge::Merge),
     /// Closes a change without merging.
     Close(close::Close),

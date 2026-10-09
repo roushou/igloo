@@ -445,8 +445,9 @@ a harness still runs as a plain command, with its raw output as transcript.
 `.igloo/agents.toml` names the repository's default tool; a task may choose another.
 
 **Changes and git.** The forge (GitHub first) is the git host and nothing more: Igloo fetches
-commits, pushes revision branches and pushes merges. Review, checks and merge decisions live in
-Igloo. `igloo change checkout <id>` fetches a change locally as a branch.
+commits, pushes revision branches and pushes merges. A merge lands one squashed commit on the
+target branch, holding the judged revision's tree, with the commits' trailers and an
+`Igloo-Change` trailer. Review, checks and merge decisions live in Igloo. `igloo change checkout <id>` fetches a change locally as a branch.
 
 ## 13. Agents and autonomy
 

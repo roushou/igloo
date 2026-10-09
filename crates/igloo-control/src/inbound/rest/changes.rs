@@ -256,9 +256,9 @@ pub(crate) async fn ask_for_changes(
     load(state, change).await
 }
 
-/// Merges a change: its latest revision's checks must have passed, it must fast-forward the
-/// target branch, and changes to protected paths need a human approval. Igloo pushes the
-/// target branch.
+/// Merges a change: its latest revision's checks must have passed, it must be based on the
+/// target branch's head, and changes to protected paths need a human approval. Igloo pushes
+/// the revision to the target branch as one squashed commit naming the change.
 #[utoipa::path(
     post,
     path = "/v1/changes/{id}/merge",

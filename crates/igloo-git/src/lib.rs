@@ -28,7 +28,7 @@ mod transfer;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-pub use commit::Commit;
+pub use commit::{Commit, Signature};
 pub use config::ConfigKey;
 pub use diff::{DiffEntry, DiffStatus};
 pub use error::{GitError, GitValueError};

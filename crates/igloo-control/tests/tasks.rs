@@ -196,7 +196,16 @@ async fn a_review_sends_the_task_back_and_a_merge_finishes_it() {
         .await
         .expect("a human approves");
     client.merge_change(&change).await.expect("merge");
-    assert_eq!(origin.head("main"), head);
+    let main = origin.head("main");
+    let tree = |commit: &str| {
+        origin.git(&[
+            "-C",
+            &origin.path,
+            "rev-parse",
+            &format!("{commit}^{{tree}}"),
+        ])
+    };
+    assert_eq!(tree(&main), tree(&head), "the squash holds the task's work");
     let done = settled_end(client, &task.id).await;
     assert_eq!(done.phase, TaskPhase::Done);
     stopped(client, &done.sandbox.expect("sandbox")).await;

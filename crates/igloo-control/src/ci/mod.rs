@@ -215,7 +215,6 @@ impl CiModule {
         platform.reactor(RecordOutcomes {
             changes: changes.clone(),
             runs: queries,
-            forge: Arc::clone(&ports.forge),
         });
         platform.reactor(RecordReverts {
             changes,

@@ -31,14 +31,14 @@ igloo change create              # repository, branch and title come from the ch
 igloo change show <id>           # revisions, runs and checks; `igloo logs <job>` for output
 git push origin my-change && igloo change push <id>   # after more commits: a new revision
 igloo change approve <id>        # needed when protected paths changed (.igloo/agents.toml)
-igloo change merge <id>          # Igloo pushes main
+igloo change merge <id>          # Igloo pushes one squashed commit to main
 ```
 
 A merge is refused while the latest revision's checks have not passed, while protected paths lack
 an approval of that revision, and when `main` moved: rebase, push and `igloo change push <id>`.
 
 Every merge records an outcome event (`igloo.outcome.recorded`); a later `git revert` of its
-commits on `main` is recorded against it (`igloo.outcome.reverted`).
+squashed commit on `main` is recorded against it (`igloo.outcome.reverted`).
 
 ## Agents
 

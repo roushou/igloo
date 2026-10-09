@@ -120,7 +120,6 @@ impl CommandHandler<RecordOutcome> for RecordOutcomeHandler {
 pub(super) struct RecordOutcomes {
     pub(super) changes: ChangeQueries,
     pub(super) runs: RunQueries,
-    pub(super) forge: Arc<dyn Forge>,
 }
 
 /// Records reverts of merged changes found on default branches, looking whenever a change
@@ -172,14 +171,9 @@ impl RecordOutcomes {
             .revisions()
             .find(|candidate| candidate.number == revision)
             .unwrap_or_else(|| change.latest());
-        let commits = match verdict {
-            Verdict::Merged { .. } => self
-                .forge
-                .commits(change.repo(), &judged.base, &judged.head)
-                .await?
-                .into_iter()
-                .map(|(commit, _)| commit)
-                .collect(),
+        // A merge lands one squashed commit on the target branch.
+        let commits = match &verdict {
+            Verdict::Merged { commit } => vec![commit.clone()],
             Verdict::Closed => Vec::new(),
         };
         Ok(OutcomeRecord {

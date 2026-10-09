@@ -277,11 +277,24 @@ async fn a_change_merges_once_its_checks_pass_and_protected_paths_are_approved()
     client.approve_change(&change.id).await.expect("approve");
     let merged = client.merge_change(&change.id).await.expect("merge");
     assert_eq!(merged.phase, ChangePhase::Merged);
-    assert_eq!(merged.merged_commit.as_deref(), Some(rebased.as_str()));
+    let main = origin.head("main");
     assert_eq!(
-        origin.head("main"),
-        rebased,
+        merged.merged_commit.as_deref(),
+        Some(main.as_str()),
         "Igloo pushed the target branch"
+    );
+    let tree = |commit: &str| {
+        origin.git(&[
+            "-C",
+            &origin.path,
+            "rev-parse",
+            &format!("{commit}^{{tree}}"),
+        ])
+    };
+    assert_eq!(
+        tree(&main),
+        tree(&rebased),
+        "one squashed commit of the revision"
     );
     let again = client.merge_change(&change.id).await.expect("merge again");
     assert_eq!(again.phase, ChangePhase::Merged);

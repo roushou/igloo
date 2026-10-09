@@ -14,6 +14,7 @@ pub(crate) struct Invocation<'a> {
     command: &'static str,
     args: Vec<OsString>,
     config: Vec<(String, String)>,
+    env: Vec<(&'static str, String)>,
 }
 
 /// What a finished invocation printed and how it exited.
@@ -47,12 +48,19 @@ impl<'a> Invocation<'a> {
             command,
             args: Vec::new(),
             config: Vec::new(),
+            env: Vec::new(),
         }
     }
 
     /// Appends one argument.
     pub(crate) fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
         self.args.push(arg.as_ref().to_owned());
+        self
+    }
+
+    /// Sets environment variable `key` to `value` for this run.
+    pub(crate) fn env(mut self, key: &'static str, value: impl Into<String>) -> Self {
+        self.env.push((key, value.into()));
         self
     }
 
@@ -88,6 +96,9 @@ impl<'a> Invocation<'a> {
             .kill_on_drop(true);
         for variable in Self::REPOSITORY_VARIABLES {
             command.env_remove(variable);
+        }
+        for (key, value) in &self.env {
+            command.env(key, value);
         }
         if self.git.environment() == Environment::Isolated {
             command

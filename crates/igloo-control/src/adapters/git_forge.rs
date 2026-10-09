@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
+use igloo_core::Timestamp;
 use igloo_core::repo::{BranchName, CommitId, RepoId};
 use igloo_git::{
     ConfigKey, Credentials, DiffStatus, Endpoint, Git, GitError, Layout, Lease, PushRejection,
-    RefName, Refspec, RemoteUrl, RepoPath, Repository,
+    RefName, Refspec, RemoteUrl, RepoPath, Repository, Signature,
 };
 
 use crate::ports::{Expected, Forge, ForgeError, Remote};
@@ -30,6 +31,8 @@ impl GitForge {
     const IMPORTED: &'static str = "refs/igloo/imported";
     /// Lets shallow checkouts fetch commits by id rather than by branch.
     const ALLOW_ANY_COMMIT: &'static str = "uploadpack.allowAnySHA1InWant";
+    /// The committer of the commits the forge creates, such as squashes.
+    const COMMITTER: (&'static str, &'static str) = ("Igloo", "igloo@igloo.invalid");
 
     /// Mirrors under `root`.
     #[must_use]
@@ -206,6 +209,30 @@ impl Forge for GitForge {
             return Ok(None);
         };
         Ok(mirror.read_blob(commit, &path).await?)
+    }
+
+    async fn squash(
+        &self,
+        repo: RepoId,
+        onto: &CommitId,
+        head: &CommitId,
+        message: &str,
+        at: Timestamp,
+    ) -> Result<CommitId, ForgeError> {
+        let mirror = self.holding(repo, &[onto, head]).await?;
+        let oldest = mirror
+            .commits(onto, head)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| ForgeError::Git(format!("{head} adds no commit to {onto}")))?;
+        let seconds = jiff::Timestamp::from(at).as_second();
+        let author = mirror.author(oldest.id()).await?.at(seconds);
+        let (name, email) = Self::COMMITTER;
+        let committer = Signature::new(name, email, seconds);
+        Ok(mirror
+            .commit_tree(head, onto, message, &author, &committer)
+            .await?)
     }
 
     async fn merge_base(

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use igloo_core::Timestamp;
 use igloo_core::repo::{BranchName, CommitId, RepoId, RepoLocation};
 
 use super::SecretValue;
@@ -43,6 +44,19 @@ pub trait Forge: Send + Sync {
         commit: &CommitId,
         path: &str,
     ) -> Result<Option<Vec<u8>>, ForgeError>;
+
+    /// Creates in `repo`'s mirror one commit with `head`'s tree on the single parent `onto`,
+    /// with `message`, authored by the author of the oldest commit between `onto` and `head`
+    /// and committed by Igloo, both dated `at`; returns it. `head` must descend from `onto`.
+    /// Equal inputs give the same commit, so a squash can be recomputed to recognize it.
+    async fn squash(
+        &self,
+        repo: RepoId,
+        onto: &CommitId,
+        head: &CommitId,
+        message: &str,
+        at: Timestamp,
+    ) -> Result<CommitId, ForgeError>;
 
     /// The best common ancestor of `a` and `b` in `repo`'s mirror; `None` when their histories
     /// are unrelated.

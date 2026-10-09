@@ -344,9 +344,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Merges a change: its latest revision's checks must have passed, it must fast-forward the
-         *     target branch, and changes to protected paths need a human approval. Igloo pushes the
-         *     target branch.
+         * Merges a change: its latest revision's checks must have passed, it must be based on the
+         *     target branch's head, and changes to protected paths need a human approval. Igloo pushes
+         *     the revision to the target branch as one squashed commit naming the change.
          */
         post: {
             parameters: {
@@ -1794,7 +1794,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancels a task and stops its sandbox. Cancelling an ended task changes nothing. */
+        /**
+         * Cancels a task and stops its sandbox. Cancelling an ended task changes nothing, except that
+         *     a task that failed collecting its commits stops the sandbox it kept for recovery.
+         */
         post: {
             parameters: {
                 query?: never;

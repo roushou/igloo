@@ -381,7 +381,7 @@
         "tags": [
           "changes"
         ],
-        "summary": "Merges a change: its latest revision's checks must have passed, it must fast-forward the\ntarget branch, and changes to protected paths need a human approval. Igloo pushes the\ntarget branch.",
+        "summary": "Merges a change: its latest revision's checks must have passed, it must be based on the\ntarget branch's head, and changes to protected paths need a human approval. Igloo pushes\nthe revision to the target branch as one squashed commit naming the change.",
         "operationId": "merge",
         "parameters": [
           {
@@ -1816,7 +1816,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Cancels a task and stops its sandbox. Cancelling an ended task changes nothing.",
+        "summary": "Cancels a task and stops its sandbox. Cancelling an ended task changes nothing, except that\na task that failed collecting its commits stops the sandbox it kept for recovery.",
         "operationId": "cancel",
         "parameters": [
           {

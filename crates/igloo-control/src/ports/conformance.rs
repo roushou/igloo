@@ -472,6 +472,47 @@ impl ForgeConformance {
         );
         self.mirror_operations(&main, &second).await;
         self.bundles().await;
+        self.squashes().await;
+    }
+
+    /// A squash is one commit with the head's tree on the base, the same for equal inputs.
+    async fn squashes(&self) {
+        let main = Self::branch("main");
+        let repo = self.remote.repo;
+        let onto = self.forge.fetch(&self.remote, &main).await.expect("fetch");
+        self.origin.commit("one", &[("squashed/1", Some("1"))]);
+        let head = self.origin.commit("two", &[("squashed/2", Some("2"))]);
+        self.forge.fetch(&self.remote, &main).await.expect("fetch");
+
+        let squash = self
+            .forge
+            .squash(repo, &onto, &head, "Squashed", at(0))
+            .await
+            .expect("squash");
+        let again = self
+            .forge
+            .squash(repo, &onto, &head, "Squashed", at(0))
+            .await
+            .expect("squash again");
+        assert_eq!(again, squash, "equal inputs give the same commit");
+        assert_eq!(
+            self.forge
+                .changed_paths(repo, &squash, &head)
+                .await
+                .expect("diff"),
+            Vec::<String>::new(),
+            "the squash holds the head's tree"
+        );
+        assert_eq!(
+            self.forge.commits(repo, &onto, &squash).await.expect("log"),
+            [(squash.clone(), "Squashed".to_owned())],
+            "one commit on the base"
+        );
+        let empty = self
+            .forge
+            .squash(repo, &onto, &onto, "Nothing", at(0))
+            .await;
+        assert!(matches!(empty, Err(ForgeError::Git(_))), "{empty:?}");
     }
 
     /// Commits made elsewhere arrive as a bundle and leave through a push.

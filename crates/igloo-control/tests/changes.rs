@@ -82,7 +82,27 @@ async fn changes_are_checked_merged_and_their_outcomes_recorded() {
     client.approve_change(&change.id).await.expect("approve");
     let merged = client.merge_change(&change.id).await.expect("merge");
     assert_eq!(merged.phase, ChangePhase::Merged);
-    assert_eq!(origin.head("main"), origin.head("feature"));
+    // One squashed commit on the old main, holding the revision's tree and naming the change.
+    let main = origin.head("main");
+    origin.git(&["fetch", "--quiet", &origin.path, "main"]);
+    assert_eq!(
+        origin.git(&["rev-parse", &format!("{main}^{{tree}}")]),
+        origin.git(&["rev-parse", "feature^{tree}"])
+    );
+    assert_eq!(
+        origin.git(&["rev-list", "--count", &format!("{main}^..{main}")]),
+        "1"
+    );
+    assert_eq!(
+        origin.git(&["merge-base", &main, "feature"]),
+        origin.git(&["rev-parse", &format!("{main}^")]),
+        "the squash sits on the main the checks were judged against"
+    );
+    assert!(
+        origin
+            .git(&["log", "-1", "--format=%B", &main])
+            .ends_with(&format!("Igloo-Change: {}", change.id))
+    );
     let shown = serde_json::to_string(&merged).expect("json");
     assert!(!shown.contains(SECRET));
 
@@ -94,7 +114,7 @@ async fn changes_are_checked_merged_and_their_outcomes_recorded() {
     assert_eq!(record["verdict"]["commit"], origin.head("main"));
     assert_eq!(record["checks"].as_array().map(Vec::len), Some(2));
     assert_eq!(record["approvals"].as_array().map(Vec::len), Some(1));
-    assert_eq!(record["commits"].as_array().map(Vec::len), Some(2));
+    assert_eq!(record["commits"], serde_json::json!([origin.head("main")]));
 
     // A revert of the merged change on main is recorded against it.
     origin.git(&["checkout", "--quiet", "main"]);
