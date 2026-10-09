@@ -5,13 +5,15 @@
 #
 #   deploy/vps.sh install   Sets up the host, then runs `update`. Safe to rerun: existing
 #                           configuration and secrets in /etc/igloo are kept.
-#   deploy/vps.sh update    Builds the binaries, installs them and restarts both services.
+#   deploy/vps.sh update    Builds the binaries and the web console, installs them and restarts
+#                           both services.
 #   deploy/vps.sh token     Prints the API token (IGLOO_DEV_TOKEN).
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 etc=/etc/igloo
 bin=/usr/local/bin
+web=/usr/local/share/igloo/web
 binaries=(igloo-control igloo-worker igloo)
 
 log() { printf '\033[1m==> %s\033[0m\n' "$*"; }
@@ -21,7 +23,7 @@ setting() { sudo sed -n "s/^$1=//p" "$etc/control.env"; }
 install_packages() {
   log "Packages"
   local missing=()
-  for package in build-essential git curl openssl postgresql crun; do
+  for package in build-essential git curl unzip openssl postgresql crun; do
     dpkg -s "$package" >/dev/null 2>&1 || missing+=("$package")
   done
   if ((${#missing[@]})); then
@@ -32,6 +34,25 @@ install_packages() {
     curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none
     # shellcheck source=/dev/null
     . "$HOME/.cargo/env"
+  fi
+}
+
+ensure_bun() {
+  export PATH="$HOME/.bun/bin:$PATH"
+  command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash
+}
+
+install_web() {
+  log "Web console"
+  ensure_bun
+  (cd "$repo/web" && bun install --frozen-lockfile && bun run build)
+  sudo rm -rf "$web"
+  sudo install -d -m 755 "$web"
+  sudo cp -r "$repo/web/dist/client/." "$web/"
+  sudo chmod -R a+rX "$web"
+  # Hosts configured before the console existed lack the variable.
+  if ! sudo grep -q '^IGLOO_WEB_DIR=' "$etc/control.env"; then
+    echo "IGLOO_WEB_DIR=$web" | sudo tee -a "$etc/control.env" >/dev/null
   fi
 }
 
@@ -97,6 +118,7 @@ update() {
   log "Build"
   cargo build --release --locked --manifest-path "$repo/Cargo.toml" \
     -p igloo-control -p igloo-worker -p igloo-cli
+  install_web
   log "Install and restart"
   for binary in "${binaries[@]}"; do
     sudo install -m 755 "$repo/target/release/$binary" "$bin/$binary"

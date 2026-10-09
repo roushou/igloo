@@ -10,23 +10,23 @@ Reads `IGLOO_*`, except `IGLOO_WORKER_*`, `IGLOO_API` and `IGLOO_TOKEN`. An unkn
 variable stops it at startup. Once serving, it logs its addresses, data directory, public URL and
 whether it embeds a worker.
 
-| Variable                        | Default                              | Meaning                                                                         |
-| ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------- |
-| `IGLOO_DATABASE_URL`            | required                             | Postgres URL, `postgres://` or `postgresql://`.                                 |
-| `IGLOO_DEV_TOKEN`               | required                             | Bearer token for REST and MCP; maps to one human with every permission.         |
-| `IGLOO_JOIN_TOKEN`              | required                             | Token workers join with.                                                        |
-| `IGLOO_BLOB_KEY`                | required                             | Signs presigned blob URLs. At least 32 bytes.                                   |
-| `IGLOO_SECRETS_KEY`             | required                             | Encrypts repository secrets. At least 32 bytes. Changing it loses every secret. |
-| `IGLOO_LISTEN`                  | `127.0.0.1:7000`                     | REST, SSE and MCP address.                                                      |
-| `IGLOO_GATEWAY_LISTEN`          | `127.0.0.1:7001`                     | Worker gateway (gRPC) address.                                                  |
-| `IGLOO_DATA_DIR`                | the user's data directory, see below | Blobs, repository mirrors, image downloads, the embedded worker's state.        |
-| `IGLOO_PUBLIC_URL`              | `http://` and the bound REST address | The REST URL as workers reach it, for blob downloads.                           |
-| `IGLOO_LEASE_TTL_SECONDS`       | `30`                                 | How long a job lease lasts without a heartbeat. 1 to 3600.                      |
-| `IGLOO_COMMAND_TIMEOUT_SECONDS` | `10`                                 | How long one command may take. 1 to 300.                                        |
-| `IGLOO_LOG_FORMAT`              | `pretty`                             | `pretty` or `json`.                                                             |
-| `IGLOO_EMBEDDED_WORKER`         | `false`                              | Runs an unisolated worker in the server process. Development only.              |
-| `IGLOO_WEB_DIR`                  | unset                                | A built web console (`web/dist/client`, holding `index.html`), served at `/`. Unset, `/` is 404. |
-| `RUST_LOG`                      | `info`                               | Log filter.                                                                     |
+| Variable                        | Default                              | Meaning                                                                                          |
+| ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `IGLOO_DATABASE_URL`            | required                             | Postgres URL, `postgres://` or `postgresql://`.                                                  |
+| `IGLOO_DEV_TOKEN`               | required                             | Bearer token for REST and MCP; maps to one human with every permission.                          |
+| `IGLOO_JOIN_TOKEN`              | required                             | Token workers join with.                                                                         |
+| `IGLOO_BLOB_KEY`                | required                             | Signs presigned blob URLs. At least 32 bytes.                                                    |
+| `IGLOO_SECRETS_KEY`             | required                             | Encrypts repository secrets. At least 32 bytes. Changing it loses every secret.                  |
+| `IGLOO_LISTEN`                  | `127.0.0.1:7000`                     | REST, SSE and MCP address.                                                                       |
+| `IGLOO_GATEWAY_LISTEN`          | `127.0.0.1:7001`                     | Worker gateway (gRPC) address.                                                                   |
+| `IGLOO_DATA_DIR`                | the user's data directory, see below | Blobs, repository mirrors, image downloads, the embedded worker's state.                         |
+| `IGLOO_PUBLIC_URL`              | `http://` and the bound REST address | The REST URL as workers reach it, for blob downloads.                                            |
+| `IGLOO_LEASE_TTL_SECONDS`       | `30`                                 | How long a job lease lasts without a heartbeat. 1 to 3600.                                       |
+| `IGLOO_COMMAND_TIMEOUT_SECONDS` | `10`                                 | How long one command may take. 1 to 300.                                                         |
+| `IGLOO_LOG_FORMAT`              | `pretty`                             | `pretty` or `json`.                                                                              |
+| `IGLOO_EMBEDDED_WORKER`         | `false`                              | Runs an unisolated worker in the server process. Development only.                               |
+| `IGLOO_WEB_DIR`                 | unset                                | A built web console (`web/dist/client`, holding `index.html`), served at `/`. Unset, `/` is 404. |
+| `RUST_LOG`                      | `info`                               | Log filter.                                                                                      |
 
 `IGLOO_DATA_DIR` defaults to:
 

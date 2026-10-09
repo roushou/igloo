@@ -322,3 +322,24 @@ fn stopping_a_stopped_sandbox_is_a_no_op() {
 | `name.rs` next to `name/`                         | `name/mod.rs`               |
 | Global trust settings (grants, budgets, policy)   | settings on `Repo`          |
 | Comments narrating history or decisions           | an ADR                      |
+
+## 19. Web console
+
+`web/` is TypeScript, formatted and linted by Biome and run with Bun (ADR 0012). Rust rules do not
+apply there; these do.
+
+- Layout: `src/routes/` holds TanStack Router file routes and nothing else (a route loads data and
+  renders a page component); `src/components/` holds components, `src/components/ui/` the shadcn/ui
+  primitives; `src/lib/` holds helpers and query definitions; `src/api/` holds the API client and
+  the generated types.
+- `src/api/schema.gen.ts` is generated from `schemas/openapi.json` by `bun run gen:api`. Never edit
+  it; commit it with the schema change that caused it.
+- Server data is read through TanStack Query. Query keys and `queryOptions` are defined in
+  `src/lib/queries.ts`; components do not spell keys. Components do not keep copies of server data
+  in state.
+- `fetch` is called only inside `src/api/client.ts`. Everything else uses `ApiClient`, which
+  attaches the token and handles 401.
+- The build must not touch the browser at import time: SPA prerendering imports every module on
+  the server.
+- Tests sit beside the code as `*.test.ts(x)`, render the real route tree, and stub the server at
+  `fetch`.

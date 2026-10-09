@@ -149,6 +149,37 @@ jobs:
       - name: Unused dependencies
         run: cargo shear
 
+  web:
+    name: Web console
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Biome
+        run: bunx biome ci .
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Tests
+        run: bun run test
+
+      - name: Build
+        run: bun run build
+
+      - name: Generated API types are current
+        run: bun run gen:api:check
+
   isolation:
     name: Linux isolation
     runs-on: ubuntu-latest
@@ -196,7 +227,7 @@ jobs:
 
   ci:
     runs-on: ubuntu-latest
-    needs: [formatting, protobuf, clippy, tests, sqlx, dependencies, isolation]
+    needs: [formatting, protobuf, clippy, tests, sqlx, dependencies, web, isolation]
     if: always()
     steps:
       - name: All checks passed

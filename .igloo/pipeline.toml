@@ -4,8 +4,8 @@ image = "docker.io/library/rust:1.99-slim"
 
 [warm]
 # Installs git and the toolchain's components and builds every dependency once per lockfile.
-command = "apt-get update -qq && apt-get install -qq -y --no-install-recommends git >/dev/null && cargo fetch --locked && cargo clippy --workspace --all-targets --locked && cargo test --workspace --lib --locked --no-run"
-lockfiles = ["Cargo.lock", "rust-toolchain.toml"]
+command = "apt-get update -qq && apt-get install -qq -y --no-install-recommends git curl unzip ca-certificates >/dev/null && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && (cd web && bun install --frozen-lockfile) && cargo fetch --locked && cargo clippy --workspace --all-targets --locked && cargo test --workspace --lib --locked --no-run"
+lockfiles = ["Cargo.lock", "rust-toolchain.toml", "web/bun.lock"]
 timeout_seconds = 3600
 
 [sandbox]
@@ -30,3 +30,9 @@ run = "cargo clippy --workspace --all-targets --locked --offline -- -D warnings"
 name = "test"
 # Postgres tests need Docker, which sandboxes do not have; GitHub Actions runs them.
 run = "cargo test --workspace --lib --locked --offline -- --skip postgres"
+
+[[checks]]
+name = "web"
+# Format and lint, types, tests, the production build, and the generated API types.
+run = "cd web && bun install --frozen-lockfile && bun run lint && bun run typecheck && bun run test && bun run build && bun run gen:api:check"
+timeout_seconds = 600

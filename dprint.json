@@ -6,7 +6,8 @@
   "toml": {
   },
   "excludes": [
-    "**/*-lock.json"
+    "**/*-lock.json",
+    "web/**"
   ],
   "plugins": [
     "npm:@dprint/json@0.25.1",

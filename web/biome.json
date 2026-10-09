@@ -1,0 +1,9 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": {
+    "includes": ["**", "!dist", "!.tanstack", "!src/routeTree.gen.ts", "!src/api/schema.gen.ts"]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "linter": { "rules": { "preset": "recommended" } },
+  "css": { "parser": { "tailwindDirectives": true } }
+}

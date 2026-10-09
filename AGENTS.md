@@ -13,16 +13,17 @@ workspace, with a React web console in `web/` (ADR 0012). `CLAUDE.md` imports th
 
 ## Workspace map
 
-| Crate                   | Kind      | Purpose                                                | May depend on (internal)                |
-| ----------------------- | --------- | ------------------------------------------------------ | --------------------------------------- |
-| `igloo-core`            | lib       | Pure domain: vocabulary and platform primitives        | nothing                                 |
-| `igloo-api`             | lib       | Public API contract: REST types, problems, OpenAPI     | core                                    |
-| `igloo-worker-protocol` | lib       | Server <-> worker gRPC contract                        | core                                    |
-| `igloo-control`         | lib + bin | Server: bus, controllers, ports, adapters, inbound, CI | core, api, worker-protocol, worker, git |
-| `igloo-worker`          | lib + bin | Worker: runtimes, snapshots, executors, reconciler     | core, worker-protocol                   |
-| `igloo-rs`              | lib       | Rust SDK, library name `igloo`                         | api                                     |
-| `igloo-cli`             | bin       | CLI, binary `igloo`                                    | rs, core, git                           |
-| `igloo-git`             | lib       | Git client over the `git` binary                       | core                                    |
+| Crate                   | Kind      | Purpose                                                 | May depend on (internal)                |
+| ----------------------- | --------- | ------------------------------------------------------- | --------------------------------------- |
+| `igloo-core`            | lib       | Pure domain: vocabulary and platform primitives         | nothing                                 |
+| `igloo-api`             | lib       | Public API contract: REST types, problems, OpenAPI      | core                                    |
+| `igloo-worker-protocol` | lib       | Server <-> worker gRPC contract                         | core                                    |
+| `igloo-control`         | lib + bin | Server: bus, controllers, ports, adapters, inbound, CI  | core, api, worker-protocol, worker, git |
+| `igloo-worker`          | lib + bin | Worker: runtimes, snapshots, executors, reconciler      | core, worker-protocol                   |
+| `igloo-rs`              | lib       | Rust SDK, library name `igloo`                          | api                                     |
+| `igloo-cli`             | bin       | CLI, binary `igloo`                                     | rs, core, git                           |
+| `igloo-git`             | lib       | Git client over the `git` binary                        | core                                    |
+| `web/`                  | TS app    | Web console (React, Bun), static files the server hosts | none: talks to REST via `schemas/`      |
 
 ## Commands
 
@@ -36,10 +37,14 @@ workspace, with a React web console in `web/` (ADR 0012). `CLAUDE.md` imports th
 | `UPDATE_SCHEMAS=1 cargo nextest run -p igloo-control`   | After changing API types. Rewrites `schemas/`.                                             |
 | `docker compose -f dev/compose.yaml up -d --wait`       | Start local Postgres (`postgres://igloo:igloo@localhost:5432/igloo`).                      |
 | `cargo sqlx prepare --workspace`                        | After changing any SQL query, with `DATABASE_URL` set and migrations run. Commit `.sqlx/`. |
+| `cd web && bun install --frozen-lockfile`               | After pulling, or changing `web/package.json`.                                             |
+| `cd web && bun run lint && bun run typecheck`           | After every change in `web/`. `bun run lint:fix` formats.                                  |
+| `cd web && bun run test && bun run build`               | After every change in `web/`.                                                              |
+| `cd web && bun run gen:api`                             | After changing `schemas/openapi.json`. Rewrites `src/api/schema.gen.ts`; commit it.        |
 
 CI (`.github/workflows/ci.yml`) runs `buf lint`, the format checks, clippy, nextest (Postgres tests use
 testcontainers, so Docker must run), doc tests, the sqlx schema check, `cargo deny check` and
-`cargo shear`.
+`cargo shear`, and a `web` job (`biome ci`, type check, tests, build, generated API types current).
 
 ## Hard rules
 

@@ -220,13 +220,14 @@ igloo/
 │   │   ├── agents/           tool settings, tasks, harnesses, transcripts
 │   │   ├── ports/            one trait per side effect, with its conformance suite
 │   │   ├── adapters/         memory/, postgres/, ...
-│   │   └── inbound/          rest/, mcp, gateway/
+XX
 │   ├── igloo-worker/src/     runtime/, snapshot/, executor/, reconciler, gateway client
 │   │   (tests/)              end-to-end tests: real server, embedded worker, Postgres
 │   ├── igloo-git/src/        Git, Repository, typed refs, URLs and paths; testing::Fixture
 │   │                         (feature "testing")
 │   ├── igloo-rs/src/         Client, log streaming, `Layer::from_dir`, `Client::run`
 │   └── igloo-cli/src/        main.rs: a thin binary over the SDK and igloo-git
+├── web/                      web console (ADR 0012): routes, components, lib, generated API types
 └── .github/                  CI workflow, CODEOWNERS (protected paths)
 ```
 
@@ -279,7 +280,7 @@ outcomes. There is no global equivalent.
 ```
 composition.rs  Server: the only place naming concrete adapters
 ┌────────────────────────────────────────────────────────────────────┐
-│ inbound/  rest/ (REST, SSE)  mcp (MCP)  gateway/ (worker gRPC)     │
+│ inbound/  rest/ (REST, SSE)  mcp (MCP)  gateway/  web (console)    │
 ├────────────────────────────────────────────────────────────────────┤
 │ app/        CommandBus · Controller · Reactor · TaskSupervisor     │
 │             PlatformBuilder ◄── each module registers an Extension │
