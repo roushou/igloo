@@ -15,8 +15,8 @@ tailnet. Its only credential today is the development bearer token.
 ## Decision
 
 - A web console in `web/`: React, TanStack Start in SPA mode (TanStack Router and Query), shadcn/ui
-  over Tailwind CSS, Bun as runtime and package manager, Biome for lint and format, Vitest and
-  Playwright for tests.
+  over Tailwind CSS, Bun as runtime and package manager, Biome for lint and format, Vitest for
+  tests. No browser end-to-end tests while the console is young: they cost more than they catch.
 - The console is static files. `igloo-control` serves them at `/` from `IGLOO_WEB_DIR`, with an SPA
   fallback, on the same origin as `/v1` and `/mcp`. No Start server functions and no second
   process.

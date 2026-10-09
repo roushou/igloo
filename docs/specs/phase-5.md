@@ -18,6 +18,28 @@ Order: P5.1 -> P5.2, P5.3, P5.4 and P5.5 in parallel -> P5.6 -> P5.7 and P5.8 in
 
 Read first for every task: ADR 0012, architecture §10.
 
+## Console design
+
+Every page follows one visual system, light and dark, following the system theme:
+
+- Neutrals: cool snow greys biased toward blue (light: background `#f3f6f8`, surface `#ffffff`,
+  sunken `#eaeff3`, ink `#0f1b25`, muted `#5a6a77`, lines `#d8e0e6`; dark: background `#0a1016`,
+  surface `#111a22`, sunken `#0d151c`, ink `#e2e9ef`, muted `#8b9ba8`, lines `#23313c`).
+- Accent: expedition orange (`#d9530b` light, `#ff7b33` dark), reserved for what waits on the user.
+  It never means an error.
+- Status colors, each with a soft background: running blue, passed green, failed red, errored amber
+  (Igloo or the machine at fault, never the code), closed grey. One pill per state, the six states
+  of P5.6, everywhere.
+- Logs, transcripts' tool output and diffs sit on a dark surface in both themes.
+- Type: Bricolage Grotesque for page titles, Hanken Grotesk for text, JetBrains Mono for ids, code,
+  logs and numbers (tabular). Ids show shortened and copy on click.
+- Layout: a left rail (repository switcher, Now, Tasks, Changes, System, Repository, ⌘K), pages that
+  put what needs the user before what runs, and what runs before history. Running items show their
+  step, elapsed time and time since their last output.
+
+Approved dependencies for the pages: `@tanstack/react-virtual` (long logs and transcripts) and
+`@pierre/diffs` (the change Diff tab, with line comments).
+
 ## P5.1 Console foundation and hosting
 
 - Contract changes: configuration (`IGLOO_WEB_DIR`); new dependencies: `tower-http` (`fs`) and the
@@ -203,15 +225,13 @@ An empty console, signed in with the token, served by the server, built in CI an
 
 ### Deliverables
 
-- A Playwright test against a server with an embedded worker and a `command` tool: sign in, create a
-  task, see it run and open a change, comment, request changes, approve and merge, all through the
-  console, with the Now page updating live.
 - `docs/console.md`: opening the console through the tunnel, and what each page shows.
+- Component tests of each page's states over recorded API responses, as in P5.6 to P5.8. No browser
+  end-to-end tests (ADR 0012).
 
 ### Acceptance
 
-- The test passes in CI.
-- The exit gate holds on the host for the Igloo repository.
+- The exit gate holds on the host for the Igloo repository, checked by the owner.
 
 ## Out of scope
 
