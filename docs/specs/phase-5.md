@@ -15,6 +15,7 @@ Exit gate, for the Igloo repository itself, through the tunnel at `http://127.0.
 6. Secrets are set and deleted from the console; values are never shown or returned.
 
 Order: P5.1 -> P5.2, P5.3, P5.4 and P5.5 in parallel -> P5.6 -> P5.7 and P5.8 in parallel -> P5.9.
+P5.10 follows P5.8.
 
 Read first for every task: ADR 0012, architecture §10.
 
@@ -232,6 +233,45 @@ An empty console, signed in with the token, served by the server, built in CI an
 ### Acceptance
 
 - The exit gate holds on the host for the Igloo repository, checked by the owner.
+
+## P5.10 Layer garbage collection
+
+- Depends on: P5.8
+- Contract changes: ports (`BlobStore`), `igloo-api`, `schemas/openapi.json`
+- Read first: ADR 0004, `ports/blob.rs`, `platform/snapshot.rs`
+
+### Goal
+
+The server's blob store keeps what can still be used and reclaims the rest, and the System page
+shows it.
+
+### Deliverables
+
+- `BlobStore::list` (each blob's digest, size and when it was stored) and `BlobStore::delete`, in
+  the file-system and memory adapters, with cases in the blob store conformance suite. Deleting a
+  missing blob succeeds; a blob stored again after a delete is whole.
+- A collector in the platform that runs every hour through `TaskSupervisor`:
+  - Marks every blob reachable from a live root: the manifests and layers of each repository's
+    recorded warm and agent snapshots, of sandboxes that are not stopped, of builds and seals in
+    progress, and every snapshot a manifest names as its base.
+  - Sweeps every unmarked blob stored more than 24 hours ago. Blobs younger than that are kept,
+    so a run or task that is starting never loses a layer it was just given.
+  - Records each sweep: when, blobs and bytes kept, blobs and bytes reclaimed.
+- `GET /v1/storage`: blobs and bytes stored, the last sweep and what it reclaimed.
+- The System page shows the store's size and the last sweep beside the workers' meters.
+
+### Acceptance
+
+- An unreferenced blob older than the grace period is deleted; a referenced one, or a younger
+  one, is kept (scenario tests over the memory adapters).
+- A warm snapshot replaced by a newer key loses its layers at the next sweep after the grace
+  period, unless another root still references them.
+- Two sweeps in a row reclaim nothing the second time.
+
+### Out of scope
+
+- The worker's layer cache, which already evicts beyond `IGLOO_WORKER_LAYER_CACHE_MIB`.
+- Retention settings; the grace period and interval are constants until they need to change.
 
 ## Out of scope
 
