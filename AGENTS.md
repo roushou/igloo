@@ -1,7 +1,7 @@
 # Igloo: agent operating manual
 
 Igloo is a self-hosted platform where humans and agents build and maintain software. Rust
-workspace; SvelteKit web UI in `web/` later. `CLAUDE.md` imports this file.
+workspace, with a React web console in `web/` (ADR 0012). `CLAUDE.md` imports this file.
 
 ## Read before any change
 

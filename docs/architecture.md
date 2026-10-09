@@ -394,6 +394,9 @@ composition.rs  Server: the only place naming concrete adapters
 - **MCP**: streamable HTTP at `/mcp` beside REST, with the same token and resources; tools are
   thin adapters over the command bus, named like their commands (`task.create`). They neither
   approve nor merge. See `docs/mcp.md`.
+- **Web console**: a React app in `web/` (TanStack Start in SPA mode, shadcn/ui, Bun), served as
+  static files at `/` from `IGLOO_WEB_DIR`. It uses only REST and the event stream, with types
+  generated from `schemas/openapi.json`, and performs every human action. See ADR 0012.
 - **Repository files**: `.igloo/pipeline.toml` (pipeline spec, JSON Schema in `schemas/`) and
   `.igloo/agents.toml` (protected paths, budgets, task categories).
 
@@ -472,14 +475,15 @@ Igloo. `igloo change checkout <id>` fetches a change locally as a branch.
 
 ## 15. Roadmap
 
-Each phase ends with something usable. Phases 1 to 5 target Igloo's own repository;
-phase 6 opens Igloo to external repositories.
+Each phase ends with something usable. Phases 1 to 6 target Igloo's own repository;
+phase 7 opens Igloo to external repositories.
 
 | Phase                   | Scope                                                                                                                                                             | Exit gate                                                                                                                             |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | 1 Run                   | Core vocabulary, Postgres + outbox, command bus, controllers, worker protocol, `ProcessRuntime`, SDK, CLI                                                         | `igloo run -- cargo test` in a local repository runs on a worker and streams logs and exit code                                       |
 | 2 Isolate               | OCI runtime (youki), image import, overlay layer cache, seal and fork, presigned blob URLs, idempotency storage, lease expiry                                     | An imported image runs `cargo test` isolated on Linux; a fork of a warm snapshot starts in under a second; a lost lease fails its job |
 | 3 Changes               | `Repo` with secrets and trust settings, the forge as git host, git checkouts in sandboxes, `Change` with revisions, checks run by Igloo, merge, outcome recording | Igloo checks and merges its own changes; GitHub Actions stays as break-glass                                                          |
-| 4 Agents                | Agent harnesses (Claude Code, Codex, Pi, ...), normalized transcripts, `Task`, MCP server, web UI for timelines and review, agent tokens and grants               | From an editor's agent, two Igloo tasks run in parallel; both changes are reviewed in Igloo and one is merged                         |
-| 5 Autonomy              | Autonomy stages, Firecracker, multi-node, workflows                                                                                                               | Igloo reaches the Maintain stage for one task category                                                                                |
-| 6 External repositories | Onboarding, more forges and toolchains, tenancy decision                                                                                                          | An external repository runs CI and the agent loop on Igloo                                                                            |
+| 4 Agents                | Agent harnesses (Claude Code, Codex, Pi, ...), normalized transcripts, `Task`, MCP server, agent tokens and grants                                                | From an editor's agent, two Igloo tasks run in parallel; both changes are reviewed in Igloo and one is merged                         |
+| 5 Console               | Web console served by the server (ADR 0012), event stream, read models for screens, diffs, worker usage                                                           | Through the tunnel, the user follows and reviews a task and merges its change from the console alone                                  |
+| 6 Autonomy              | Autonomy stages, Firecracker, multi-node, workflows                                                                                                               | Igloo reaches the Maintain stage for one task category                                                                                |
+| 7 External repositories | Onboarding, more forges and toolchains, tenancy decision                                                                                                          | An external repository runs CI and the agent loop on Igloo                                                                            |
