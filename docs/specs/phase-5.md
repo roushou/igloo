@@ -15,7 +15,7 @@ Exit gate, for the Igloo repository itself, through the tunnel at `http://127.0.
 6. Secrets are set and deleted from the console; values are never shown or returned.
 
 Order: P5.1 -> P5.2, P5.3, P5.4 and P5.5 in parallel -> P5.6 -> P5.7 and P5.8 in parallel -> P5.9.
-P5.10 follows P5.8.
+P5.10 follows P5.8. P5.11 and P5.12 follow P5.9, in parallel.
 
 Read first for every task: ADR 0012, architecture §10.
 
@@ -272,6 +272,80 @@ shows it.
 
 - The worker's layer cache, which already evicts beyond `IGLOO_WORKER_LAYER_CACHE_MIB`.
 - Retention settings; the grace period and interval are constants until they need to change.
+
+## P5.11 Console polish
+
+- Depends on: P5.9
+- Contract changes: none; new dependencies: `@fontsource-variable/bricolage-grotesque`,
+  `@fontsource-variable/hanken-grotesk`, `@fontsource-variable/jetbrains-mono`, `motion`
+- Read first: the Console design section, every file in `web/src`
+
+### Goal
+
+The console reads as a modern product (Linear, Vercel and Railway are the bar), not a styled admin
+template: dense but calm, precise typography, every state designed, and fast to operate from the
+keyboard.
+
+### Deliverables
+
+- Visual system, written once as tokens and primitives and used everywhere:
+  - The palette of the Console design section, applied with restraint: mostly neutrals, hairline
+    borders, one level of elevation for floating surfaces, colour only for status and the orange
+    "needs you". No heavy borders, no boxed sections inside boxed sections.
+  - Self-hosted fonts through Fontsource. A type scale of at most six sizes; page titles in
+    Bricolage Grotesque, everything else in Hanken Grotesk, ids, numbers, code and logs in
+    JetBrains Mono with tabular figures.
+  - A 4 px spacing grid, consistent radii, focus rings on every interactive element.
+- Layout: a slim sidebar with icons and labels, collapsible to icons, with the repository switcher
+  at the top and counts on Now and Changes; a sticky page header with breadcrumbs and the page's
+  primary action; detail pages as split views where a list and its detail sit side by side.
+- Components with every state: lists as compact rows (status pill, title, meta in muted mono,
+  relative time with the absolute time on hover); skeletons while loading; empty states that say
+  what will appear and how to make it happen (the CLI or MCP command); errors that say what failed
+  and offer a retry; toasts for completed actions; confirmation for merge and close.
+- Logs, transcripts and diffs on the dark code surface: line numbers, sticky file headers in diffs,
+  collapsible tool calls with their duration, live tails that follow until the user scrolls up.
+- Ergonomics: ⌘K runs actions as well as opening ids (create a task, go to a page, merge the
+  current change); `j`/`k` move through lists and Enter opens; `g` then `n`, `t`, `c`, `s` go to
+  pages; `?` lists every shortcut; filters persist in the URL.
+- Motion: short, purposeful transitions (status changes, panels, toasts) through `motion`, all
+  disabled under `prefers-reduced-motion`.
+- Responsive down to 390 px: the sidebar becomes a sheet, Now stays fully usable.
+- Verified by eye: the implementer renders every page in light and dark, at 1440 px and 390 px,
+  over the test fixtures with a headless browser, and iterates on the screenshots. The browser and
+  scripts stay outside the repository.
+
+### Acceptance
+
+- The component tests of P5.6 to P5.9 still pass, updated only where markup changed, plus tests
+  for the keyboard shortcuts and the ⌘K actions.
+- The owner judges the result in the browser.
+
+### Out of scope
+
+- New pages or API changes; P5.12 adds the missing data.
+
+## P5.12 Console data gaps
+
+- Depends on: P5.9
+- Contract changes: `igloo-api`, `schemas/openapi.json`
+
+### Deliverables
+
+- `started_at` and `ended_at` on jobs and on checks (from their jobs), and `ended_at` on runs,
+  derived from their events, as P5.3 specified.
+- `merged_at` and `closed_at` on changes.
+- The sandbox of a run's checks on `RunResource`.
+- `GET /v1/repos/{id}/snapshots`: the repository's recorded warm and agent snapshots with their
+  keys, sizes and when they were built.
+- The transcript's `after` and the diff's `revision` declared as query parameters in OpenAPI, and
+  the console's casts for them removed.
+- The console shows the new data: elapsed and previous durations on running checks, the time
+  since a job's last output, the snapshots on System, the run's sandbox, and the Timeline's end.
+
+### Acceptance
+
+- Each new field is covered by a REST test; the committed schema and generated types are current.
 
 ## Out of scope
 
