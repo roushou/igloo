@@ -22,8 +22,9 @@ use super::{ExitOutcome, LocalSandbox, OutputChunk, Process, RuntimeError, Sandb
 /// fresh PID, IPC, UTS, mount and cgroup namespaces, the sandbox's CPU and memory limits as
 /// cgroup v2 resources (no swap), and the network: under [`NetworkPolicy::DenyAll`] the
 /// sandbox's own network namespace, shared by its jobs, with only loopback, up; under
-/// [`NetworkPolicy::AllowAll`] the host's network. Writes land in the sandbox's root, so later
-/// jobs see them.
+/// [`NetworkPolicy::AllowAll`] the host's network. Under either, `/etc/hosts` resolves
+/// `localhost` and the container's hostname to loopback. Writes land in the sandbox's root, so
+/// later jobs see them.
 ///
 /// Invariant: every container this runtime started for a sandbox is deleted by the time its
 /// job ends or the sandbox stops, and its network namespace once the sandbox stops.
@@ -57,6 +58,8 @@ impl OciRuntime {
     const PATH: &'static str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
     /// The home of the root user processes run as, unless the sandbox sets another.
     const HOME: &'static str = "HOME=/root";
+    /// The hostname of every container.
+    const HOSTNAME: &'static str = "sandbox";
 
     /// A runtime driving `binary`, keeping container state under `state`.
     #[must_use]
@@ -110,8 +113,21 @@ impl OciRuntime {
             .map_or_else(|| sandbox.root.join("..bundles"), |dir| dir.join("bundles"))
     }
 
-    /// The OCI runtime configuration of one job.
-    fn config(&self, sandbox: &LocalSandbox, process: &Process, hostname: &str) -> Value {
+    /// The `/etc/hosts` of a container named `hostname`: loopback for `localhost` and itself.
+    fn hosts(hostname: &str) -> String {
+        format!(
+            "127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n127.0.1.1\t{hostname}\n"
+        )
+    }
+
+    /// The OCI runtime configuration of one job, whose `/etc/hosts` is the file at `hosts`.
+    fn config(
+        &self,
+        sandbox: &LocalSandbox,
+        process: &Process,
+        hostname: &str,
+        hosts: &Path,
+    ) -> Value {
         let mut env: Vec<String> = sandbox
             .env
             .iter()
@@ -132,6 +148,12 @@ impl OciRuntime {
             json!({ "type": "cgroup" }),
         ];
         let mut mounts = Self::mounts();
+        mounts.push(json!({
+            "destination": "/etc/hosts",
+            "type": "bind",
+            "source": hosts,
+            "options": ["rbind", "ro"],
+        }));
         match sandbox.network {
             NetworkPolicy::DenyAll => namespaces.push(json!({
                 "type": "network",
@@ -260,7 +282,9 @@ impl SandboxRuntime for OciRuntime {
         let container = format!("igloo-{}-{number}", sandbox.id);
         let bundle = Self::bundles(sandbox).join(number.to_string());
         tokio::fs::create_dir_all(&bundle).await?;
-        let config = self.config(sandbox, &process, "sandbox");
+        let hosts = bundle.join("hosts");
+        tokio::fs::write(&hosts, Self::hosts(Self::HOSTNAME)).await?;
+        let config = self.config(sandbox, &process, Self::HOSTNAME, &hosts);
         let bytes = serde_json::to_vec_pretty(&config).map_err(std::io::Error::other)?;
         tokio::fs::write(bundle.join("config.json"), bytes).await?;
         // A container left by an earlier worker run under the same name would block this one.
@@ -343,7 +367,9 @@ mod tests {
                 std::fs::create_dir_all(root.join(sub)).expect("mkdir");
             }
             std::fs::copy(&busybox, root.join("bin/busybox")).expect("busybox");
-            for tool in ["sh", "ls", "cat", "dd", "echo", "pwd", "sleep", "test"] {
+            for tool in [
+                "sh", "ls", "cat", "dd", "echo", "pwd", "sleep", "test", "ping",
+            ] {
                 std::os::unix::fs::symlink("busybox", root.join("bin").join(tool)).expect("link");
             }
             let runtime = OciRuntime::new(PathBuf::from(binary), dir.path().join("state"));
@@ -430,6 +456,17 @@ mod tests {
             !interfaces.trim().is_empty(),
             "the host's interfaces are visible"
         );
+    }
+
+    #[tokio::test]
+    async fn localhost_and_the_hostname_resolve_without_a_network() {
+        let Some(fixture) = Fixture::start(NetworkPolicy::DenyAll).await else {
+            return;
+        };
+        let (outcome, stdout) = fixture
+            .run("ping -c 1 -W 1 localhost && ping -c 1 -W 1 sandbox")
+            .await;
+        assert_eq!(outcome, ExitOutcome::Exited(0), "{stdout}");
     }
 
     #[tokio::test]

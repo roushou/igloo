@@ -145,11 +145,20 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn invocations_time_out() {
+        use std::os::unix::fs::PermissionsExt;
+
         let dir = tempfile::tempdir().expect("dir");
         let fixture = Fixture::new(dir.path());
-        let git = Git::isolated().with_timeout(std::time::Duration::ZERO);
+        // A git that never answers in time, so the outcome does not depend on how fast git is.
+        let program = dir.path().join("slow-git");
+        std::fs::write(&program, "#!/bin/sh\nsleep 30\n").expect("script");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let git = Git::isolated()
+            .with_program(program)
+            .with_timeout(std::time::Duration::from_millis(100));
         let opened = git.open(fixture.work()).await;
         assert!(
             matches!(opened, Err(GitError::Timeout { .. })),

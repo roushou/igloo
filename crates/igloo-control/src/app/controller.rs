@@ -134,7 +134,13 @@ where
             Plan::Act(actions) => match self.reconciler.reconcile(&resource, actions).await {
                 Ok(()) => self.queue.succeeded(id),
                 Err(error) => {
-                    tracing::warn!(controller = R::NAME, %id, %error, "reconcile failed");
+                    tracing::warn!(
+                        controller = R::NAME,
+                        %id,
+                        %error,
+                        cause = ?error,
+                        "reconcile failed"
+                    );
                     self.queue.retry(id, Instant::now());
                 }
             },
