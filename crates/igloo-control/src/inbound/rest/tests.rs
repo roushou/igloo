@@ -1816,3 +1816,28 @@ async fn me_names_the_person_the_token_stands_for() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(problem["code"], "auth.unauthenticated");
 }
+
+#[tokio::test]
+async fn workspace_events_are_streamed_with_their_repository() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    let repo = register_origin(&router, &origin).await;
+    let (status, workspace, _) = Call::new(Method::POST, format!("/v1/repos/{repo}/workspaces"))
+        .json(&json!({}))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{workspace}");
+
+    let events = Sse::open(&router, &format!("/v1/events?after=0&repo={repo}"), &[])
+        .await
+        .drain()
+        .await;
+    let created = events
+        .iter()
+        .find(|frame| frame.data["resource_id"] == workspace["id"])
+        .expect("the workspace's event");
+    assert_eq!(created.data["resource_type"], "workspace");
+    assert_eq!(created.data["repo"], repo);
+}

@@ -14,7 +14,8 @@ use igloo_api::problem::Problem;
 use igloo_core::build::Build;
 use igloo_core::change::Change;
 use igloo_core::repo::RepoId;
-use igloo_core::{Entity, Id, Prefixed, ValidationErrors, Validator};
+use igloo_core::workspace::Workspace;
+use igloo_core::{Entity, Id, Prefixed, Resource as _, ValidationErrors, Validator};
 use tokio::sync::watch;
 
 use super::auth::Caller;
@@ -123,6 +124,7 @@ enum ResourceKind {
     Sandbox,
     Seal,
     Worker,
+    Workspace,
 }
 
 impl ResourceKind {
@@ -147,6 +149,7 @@ impl FromStr for ResourceKind {
             "sbx" => Self::Sandbox,
             "seal" => Self::Seal,
             "wrk" => Self::Worker,
+            "wsp" => Self::Workspace,
             _ => return Err(()),
         })
     }
@@ -165,12 +168,13 @@ impl fmt::Display for ResourceKind {
             Self::Sandbox => "sandbox",
             Self::Seal => "seal",
             Self::Worker => "worker",
+            Self::Workspace => "workspace",
         })
     }
 }
 
-/// Finds the repository a resource belongs to. Repositories, changes, tasks, runs and builds
-/// have one; the rest do not. A repository found for a resource is remembered, as it never
+/// Finds the repository a resource belongs to. Repositories, changes, tasks, runs, builds and
+/// workspaces have one; the rest do not. A repository found for a resource is remembered, as it never
 /// changes and the memory holds at most `MAX_KNOWN` resources, so a miss costs one load.
 #[derive(Clone)]
 pub(crate) struct EventRepos {
@@ -178,6 +182,7 @@ pub(crate) struct EventRepos {
     tasks: Arc<dyn EntityStore<Task>>,
     runs: Arc<dyn EntityStore<Run>>,
     builds: Arc<dyn EntityStore<Build>>,
+    workspaces: Arc<dyn EntityStore<Workspace>>,
     known: Arc<Mutex<HashMap<String, RepoId>>>,
 }
 
@@ -192,6 +197,7 @@ impl EventRepos {
             tasks: platform.store::<Task>()?,
             runs: platform.store::<Run>()?,
             builds: platform.store::<Build>()?,
+            workspaces: platform.store::<Workspace>()?,
             known: Arc::default(),
         })
     }
@@ -208,6 +214,12 @@ impl EventRepos {
             ResourceKind::Run => Self::load(&*self.runs, subject, Run::repo).await?,
             ResourceKind::Build => {
                 Self::load(&*self.builds, subject, |build| build.spec().repo).await?
+            }
+            ResourceKind::Workspace => {
+                Self::load(&*self.workspaces, subject, |workspace| {
+                    workspace.spec().repo
+                })
+                .await?
             }
             ResourceKind::Outcome
             | ResourceKind::Job
