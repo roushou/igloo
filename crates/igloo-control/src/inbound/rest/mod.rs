@@ -12,6 +12,7 @@ pub(super) mod repos;
 pub(super) mod runs;
 mod sandboxes;
 mod seals;
+mod storage;
 pub(super) mod tasks;
 mod timings;
 mod upload;
@@ -44,8 +45,8 @@ use crate::app::{CommandBus, InstallError, PlatformBuilder};
 use crate::ci::{Merger, Run, RunQueries};
 use crate::inbound::BlobUrls;
 use crate::platform::{
-    BuildQueries, ChangeHeads, ChangeQueries, ImageImporter, RepoQueries, RepoSnapshots,
-    SandboxQueries, Snapshots, WorkerUsages,
+    BuildQueries, ChangeHeads, ChangeQueries, ImageImporter, LayerCollector, RepoQueries,
+    RepoSnapshots, SandboxQueries, Snapshots, WorkerUsages,
 };
 use crate::ports::{
     BlobStore, Clock, EntityStore, EventLog, Forge, IdGenerator, IdempotencyStore, LogStore,
@@ -75,6 +76,7 @@ pub(crate) struct ApiState {
     repo_snapshots: RepoSnapshots,
     forge: Arc<dyn Forge>,
     secrets: Arc<dyn SecretStore>,
+    collector: LayerCollector,
     snapshots: Snapshots,
     importer: ImageImporter,
     blobs: Arc<dyn BlobStore>,
@@ -160,6 +162,7 @@ impl RestApi {
                 ),
                 forge: Arc::clone(&ports.forge),
                 secrets: Arc::clone(&ports.secrets),
+                collector: LayerCollector::new(platform)?,
                 snapshots: Snapshots::new(Arc::clone(&ports.blobs)),
                 importer: ImageImporter::new(Arc::clone(&ports.registry), Arc::clone(&ports.blobs)),
                 blobs: Arc::clone(&ports.blobs),
@@ -181,6 +184,13 @@ impl RestApi {
     #[must_use]
     pub fn with_usages(mut self, usages: WorkerUsages) -> Self {
         self.state.usages = usages;
+        self
+    }
+
+    /// Reports sweeps from `collector`, the one a server runs.
+    #[must_use]
+    pub fn with_collector(mut self, collector: LayerCollector) -> Self {
+        self.state.collector = collector;
         self
     }
 
@@ -214,6 +224,7 @@ impl RestApi {
             .routes(routes!(sandboxes::create, sandboxes::list))
             .routes(routes!(sandboxes::get))
             .routes(routes!(workers::list))
+            .routes(routes!(storage::get))
             .routes(routes!(sandboxes::stop))
             .routes(routes!(sandboxes::exec))
             .routes(routes!(jobs::get))

@@ -68,14 +68,15 @@ impl MemoryPlatform {
     pub(crate) fn with(policy: Arc<dyn PolicyEngine>, timeout: Duration) -> Self {
         let log = MemoryEventLog::new();
         let ids = Arc::new(SequentialIdGenerator::default());
-        let blobs: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::default());
+        let clock = Arc::new(TokioClock {
+            origin: Instant::now(),
+        });
+        let blobs: Arc<dyn BlobStore> = Arc::new(MemoryBlobStore::new(clock.clone()));
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::default());
         let forge_dir = tempfile::tempdir().expect("forge mirrors");
         let logs: Arc<dyn LogStore> = Arc::new(MemoryLogStore::default());
         let ports = Ports {
-            clock: Arc::new(TokioClock {
-                origin: Instant::now(),
-            }),
+            clock: clock.clone(),
             ids: ids.clone(),
             events: log.clone(),
             checkpoints: Arc::new(MemoryCheckpoints::default()),

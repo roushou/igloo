@@ -2055,6 +2055,26 @@
         }
       }
     },
+    "/v1/storage": {
+      "get": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Reports what the blob store holds and what its latest sweep reclaimed.",
+        "operationId": "getStorage",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageResource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tasks/{id}": {
       "get": {
         "tags": [
@@ -3622,6 +3642,119 @@
               "$ref": "#/components/schemas/Layer"
             },
             "description": "Layers, lowest first."
+          }
+        }
+      },
+      "StorageResource": {
+        "type": "object",
+        "description": "What the blob store holds and what its latest sweep reclaimed.",
+        "required": [
+          "blobs",
+          "bytes",
+          "snapshots"
+        ],
+        "properties": {
+          "blobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Blobs stored: layers and snapshot manifests.",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their total size in bytes.",
+            "minimum": 0
+          },
+          "last_sweep": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StorageSweep",
+                "description": "The latest sweep since the server started; absent until one has run."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageSnapshot"
+            },
+            "description": "The repositories' recorded warm and agent snapshots, ordered by repository then key."
+          }
+        }
+      },
+      "StorageSnapshot": {
+        "type": "object",
+        "description": "A recorded warm or agent snapshot and its size.",
+        "required": [
+          "repo",
+          "key",
+          "snapshot",
+          "size_bytes"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The key it is recorded under."
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository that recorded it (`repo_...`)."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The sum of its layers' sizes in bytes, from file metadata; layers shared with other\nsnapshots count in each.",
+            "minimum": 0
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "The snapshot's id."
+          }
+        }
+      },
+      "StorageSweep": {
+        "type": "object",
+        "description": "What one sweep kept and reclaimed.",
+        "required": [
+          "at",
+          "kept_blobs",
+          "kept_bytes",
+          "reclaimed_blobs",
+          "reclaimed_bytes"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the sweep finished."
+          },
+          "kept_blobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Blobs left in the store.",
+            "minimum": 0
+          },
+          "kept_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their size in bytes.",
+            "minimum": 0
+          },
+          "reclaimed_blobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Blobs the sweep deleted.",
+            "minimum": 0
+          },
+          "reclaimed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their size in bytes.",
+            "minimum": 0
           }
         }
       },

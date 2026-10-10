@@ -17,6 +17,7 @@ export type Job = Schemas["JobResource"];
 export type WarmSnapshot = Schemas["WarmSnapshotResource"];
 export type Sandbox = Schemas["SandboxResource"];
 export type Worker = Schemas["WorkerResource"];
+export type Storage = Schemas["StorageResource"];
 export type Comment = Schemas["CommentResource"];
 export type Problem = Schemas["Problem"];
 export type TaskPhase = Schemas["TaskPhase"];
@@ -216,6 +217,11 @@ export class ApiClient {
 
   async workers(): Promise<Worker[]> {
     return unwrap(await this.http.GET("/v1/workers"));
+  }
+
+  /** What the blob store holds and what its latest sweep reclaimed. */
+  async storage(): Promise<Storage> {
+    return unwrap(await this.http.GET("/v1/storage"));
   }
 
   /** The sandboxes of every repository. */

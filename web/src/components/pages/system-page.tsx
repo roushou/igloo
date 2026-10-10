@@ -1,7 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Box, Camera, Server } from "lucide-react";
-import type { Run, Sandbox, Task, Worker } from "@/api/client";
+import type { Run, Sandbox, Storage, Task, Worker } from "@/api/client";
 import { Elapsed } from "@/components/elapsed";
 import { EmptyState } from "@/components/empty-state";
 import { Meter } from "@/components/meter";
@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 export function SystemPage({ sandbox }: { sandbox?: string }) {
   const workers = useQuery(queries.workers());
   const sandboxes = useQuery(queries.sandboxes());
+  const storage = useQuery(queries.storage());
   return (
     <Page crumbs={[{ label: "System" }]} title="System">
       <Await query={workers} what="workers" rows={2}>
@@ -49,12 +50,15 @@ export function SystemPage({ sandbox }: { sandbox?: string }) {
             {(sandboxes) => (
               <>
                 <Sandboxes repo={repo.id} sandboxes={sandboxes} focus={sandbox} />
-                <Snapshots repo={repo.id} sandboxes={sandboxes} />
+                <Snapshots repo={repo.id} sandboxes={sandboxes} storage={storage.data} />
               </>
             )}
           </Await>
         )}
       </WithRepo>
+      <Await query={storage} what="storage" rows={1}>
+        {(storage) => <BlobStore storage={storage} />}
+      </Await>
     </Page>
   );
 }
@@ -306,15 +310,26 @@ export type SnapshotRow = {
  * store reports it, then any other snapshot a sandbox runs from; each with how many sandboxes
  * use it.
  */
-function Snapshots({ repo, sandboxes }: { repo: string; sandboxes: Sandbox[] }) {
+function Snapshots({
+  repo,
+  sandboxes,
+  storage,
+}: {
+  repo: string;
+  sandboxes: Sandbox[];
+  storage?: Storage;
+}) {
   const recorded = useQuery(queries.repoSnapshots(repo));
+  const sizes = new Map(
+    (storage?.snapshots ?? []).map((snapshot) => [snapshot.snapshot, snapshot.size_bytes]),
+  );
   const counts = new Map<string, number>();
   for (const sandbox of sandboxes)
     counts.set(sandbox.snapshot, (counts.get(sandbox.snapshot) ?? 0) + 1);
   const rows: SnapshotRow[] = (recorded.data ?? []).map((snapshot) => ({
     id: snapshot.snapshot,
     sandboxes: counts.get(snapshot.snapshot) ?? 0,
-    size: snapshot.size_bytes ?? undefined,
+    size: snapshot.size_bytes ?? sizes.get(snapshot.snapshot) ?? undefined,
     builtAt: snapshot.built_at ?? undefined,
   }));
   for (const [id, count] of counts) {
@@ -357,6 +372,38 @@ function Snapshots({ repo, sandboxes }: { repo: string; sandboxes: Sandbox[] }) 
           </tbody>
         </table>
       )}
+    </Section>
+  );
+}
+
+/**
+ * The server's blob store, where snapshot layers live: its size, and what the latest hourly
+ * sweep kept and reclaimed.
+ */
+function BlobStore({ storage }: { storage: Storage }) {
+  const sweep = storage.last_sweep;
+  return (
+    <Section title="Blob store">
+      <div className="flex flex-col gap-3 rounded-lg border p-4">
+        <dl className="grid grid-cols-3 gap-3">
+          <Figure label="Layers and manifests" value={storage.blobs.toLocaleString()} />
+          <Figure label="Size" value={format.bytes(storage.bytes)} />
+          <div className="flex flex-col gap-0.5">
+            <dt className="text-sm text-muted-foreground">Last sweep</dt>
+            <dd className="text-lg font-medium">
+              {sweep ? <RelativeTime at={sweep.at} /> : "None since the server started"}
+            </dd>
+          </div>
+        </dl>
+        {sweep ? (
+          <p className="text-sm text-muted-foreground">
+            Reclaimed{" "}
+            <span className="tabular text-foreground">{format.bytes(sweep.reclaimed_bytes)}</span>{" "}
+            in {sweep.reclaimed_blobs} blobs; kept {format.bytes(sweep.kept_bytes)} in{" "}
+            {sweep.kept_blobs}. Unused layers older than a day are reclaimed every hour.
+          </p>
+        ) : null}
+      </div>
     </Section>
   );
 }

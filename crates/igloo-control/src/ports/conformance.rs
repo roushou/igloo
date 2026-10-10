@@ -219,6 +219,79 @@ impl BlobStoreConformance {
             "mismatched content must be rejected: {result:?}"
         );
         assert!(!self.blobs.contains(other).await.expect("contains"));
+
+        self.lists_what_is_stored().await;
+        self.deletes().await;
+    }
+
+    async fn lists_what_is_stored(&self) {
+        let (small, large) = (b"small".to_vec(), vec![7u8; 4096]);
+        let (small_digest, large_digest) = (Self::digest_of(&small), Self::digest_of(&large));
+        self.put(small_digest, small.clone()).await.expect("put");
+        self.put(large_digest, large.clone()).await.expect("put");
+        let listed = self.blobs.list().await.expect("list");
+        for (digest, bytes) in [(small_digest, &small), (large_digest, &large)] {
+            let matching: Vec<_> = listed.iter().filter(|blob| blob.digest == digest).collect();
+            assert_eq!(matching.len(), 1, "{digest} must be listed once");
+            assert_eq!(
+                matching.first().map(|blob| blob.size),
+                u64::try_from(bytes.len()).ok()
+            );
+        }
+        let before = listed
+            .iter()
+            .find(|blob| blob.digest == small_digest)
+            .map(|blob| blob.stored_at)
+            .expect("listed");
+        self.put(small_digest, small).await.expect("put again");
+        let after = self
+            .blobs
+            .list()
+            .await
+            .expect("list")
+            .into_iter()
+            .find(|blob| blob.digest == small_digest)
+            .map(|blob| blob.stored_at)
+            .expect("listed");
+        assert!(after >= before, "storing again must not age a blob");
+    }
+
+    async fn deletes(&self) {
+        let bytes = b"doomed".to_vec();
+        let digest = Self::digest_of(&bytes);
+        self.blobs
+            .delete(digest)
+            .await
+            .expect("deleting a missing blob succeeds");
+        self.put(digest, bytes.clone()).await.expect("put");
+        self.blobs.delete(digest).await.expect("delete");
+        assert!(!self.blobs.contains(digest).await.expect("contains"));
+        assert!(self.blobs.get(digest).await.expect("get").is_none());
+        assert!(
+            self.blobs
+                .list()
+                .await
+                .expect("list")
+                .iter()
+                .all(|blob| blob.digest != digest),
+            "a deleted blob must not be listed"
+        );
+        self.blobs
+            .delete(digest)
+            .await
+            .expect("deleting twice succeeds");
+        self.put(digest, bytes.clone())
+            .await
+            .expect("put after delete");
+        assert_eq!(
+            self.read(digest).await,
+            bytes,
+            "a blob stored again is whole"
+        );
+    }
+
+    fn digest_of(bytes: &[u8]) -> Digest {
+        Digest::from_blake3(*blake3::hash(bytes).as_bytes())
     }
 
     async fn put(&self, digest: Digest, bytes: Vec<u8>) -> Result<(), BlobError> {

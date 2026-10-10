@@ -24,6 +24,7 @@ export const queryKeys = {
   sandboxes: () => ["sandboxes"] as const,
   sandbox: (id: string) => ["sandbox", id] as const,
   workers: () => ["workers"] as const,
+  storage: () => ["storage"] as const,
 };
 
 /** How often a working task's transcript is read for new entries, in milliseconds. */
@@ -95,6 +96,8 @@ export const queries = {
     queryOptions({ queryKey: queryKeys.sandboxes(), queryFn: () => api.sandboxes() }),
 
   workers: () => queryOptions({ queryKey: queryKeys.workers(), queryFn: () => api.workers() }),
+
+  storage: () => queryOptions({ queryKey: queryKeys.storage(), queryFn: () => api.storage() }),
 };
 
 /**

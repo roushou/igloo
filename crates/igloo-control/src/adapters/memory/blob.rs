@@ -3,15 +3,29 @@ use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use igloo_core::Digest;
+use igloo_core::{Digest, Timestamp};
 use tokio::io::AsyncReadExt;
 
-use crate::ports::{BlobError, BlobReader, BlobStore, StorageError};
+use crate::ports::{BlobError, BlobInfo, BlobReader, BlobStore, Clock, StorageError};
 
-/// Blobs in a map.
-#[derive(Debug, Default)]
+/// A blob's bytes and when they were stored.
+type Stored = (Arc<[u8]>, Timestamp);
+
+/// Blobs in a map, stamped by a [`Clock`].
 pub struct MemoryBlobStore {
-    blobs: Mutex<HashMap<Digest, Arc<[u8]>>>,
+    clock: Arc<dyn Clock>,
+    blobs: Mutex<HashMap<Digest, Stored>>,
+}
+
+impl MemoryBlobStore {
+    /// An empty store stamping blobs with `clock`.
+    #[must_use]
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            clock,
+            blobs: Mutex::default(),
+        }
+    }
 }
 
 #[async_trait]
@@ -31,7 +45,7 @@ impl BlobStore for MemoryBlobStore {
         self.blobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(digest, bytes.into());
+            .insert(digest, (bytes.into(), self.clock.now()));
         Ok(())
     }
 
@@ -42,7 +56,7 @@ impl BlobStore for MemoryBlobStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(blobs
             .get(&digest)
-            .map(|bytes| Box::pin(Cursor::new(Arc::clone(bytes))) as BlobReader))
+            .map(|(bytes, _)| Box::pin(Cursor::new(Arc::clone(bytes))) as BlobReader))
     }
 
     async fn contains(&self, digest: Digest) -> Result<bool, BlobError> {
@@ -51,5 +65,28 @@ impl BlobStore for MemoryBlobStore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(blobs.contains_key(&digest))
+    }
+
+    async fn list(&self) -> Result<Vec<BlobInfo>, BlobError> {
+        let blobs = self
+            .blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(blobs
+            .iter()
+            .map(|(digest, (bytes, stored_at))| BlobInfo {
+                digest: *digest,
+                size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                stored_at: *stored_at,
+            })
+            .collect())
+    }
+
+    async fn delete(&self, digest: Digest) -> Result<(), BlobError> {
+        self.blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&digest);
+        Ok(())
     }
 }

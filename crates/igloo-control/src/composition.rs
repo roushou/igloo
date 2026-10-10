@@ -37,8 +37,8 @@ use crate::inbound::gateway::Gateway;
 use crate::inbound::mcp::Mcp;
 use crate::inbound::rest::{DevToken, RestApi};
 use crate::platform::{
-    BuildModule, ChangeModule, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule,
-    WorkerModule, WorkerUsages,
+    BuildModule, ChangeModule, JobModule, LayerCollector, RepoModule, SandboxModule, SealModule,
+    SnapshotModule, WorkerModule, WorkerUsages,
 };
 use crate::ports::{IdGenerator, RegistryError, StorageError};
 
@@ -82,7 +82,7 @@ impl Server {
         events: &Arc<PgEventLog>,
     ) -> Result<PlatformBuilder, ServerError> {
         let ids: Arc<dyn IdGenerator> = Arc::new(UuidV7IdGenerator);
-        let blobs = FsBlobStore::new(config.data_dir.join("blobs")).await?;
+        let blobs = FsBlobStore::new(config.data_dir.join("blobs"), Arc::new(SystemClock)).await?;
         let ports = Ports {
             clock: Arc::new(SystemClock),
             ids: Arc::clone(&ids),
@@ -162,19 +162,22 @@ impl Server {
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(Self::DEV_USER)),
         };
+        let collector = LayerCollector::new(&builder)?;
         let rest = RestApi::new(
             &builder,
             builder.bus(),
             DevToken::new(config.dev_token.clone(), actor),
             blob_urls,
         )?
-        .with_usages(usages);
+        .with_usages(usages)
+        .with_collector(collector.clone());
         let api = Mcp::router(&rest).merge(rest.router());
         let http = match &config.web_dir {
             Some(dir) => WebConsole::new(dir).mount(api),
             None => api,
         };
         let _bus = builder.build().start(&supervisor);
+        supervisor.spawn("layer-collector", |cancel| collector.run(cancel));
 
         let server = Self {
             rest: rest_listener.local_addr()?,

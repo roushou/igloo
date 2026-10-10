@@ -1588,3 +1588,21 @@ async fn a_repository_lists_its_recorded_snapshots() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn storage_reports_the_blobs_stored_and_no_sweep_before_the_first() {
+    let router = api();
+    let (status, empty, _) = Call::new(Method::GET, "/v1/storage").send(&router).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty, json!({ "blobs": 0, "bytes": 0, "snapshots": [] }));
+
+    let id = snapshot(&router).await;
+    let (_, _, manifest) = Call::new(Method::GET, format!("/v1/blobs/{id}"))
+        .send(&router)
+        .await;
+    let (_, body, _) = Call::new(Method::GET, "/v1/storage").send(&router).await;
+    assert_eq!(body["blobs"], json!(2), "the layer and the manifest");
+    assert_eq!(body["bytes"], json!(LAYER.len() + manifest.len()));
+    assert!(body.get("last_sweep").is_none());
+    assert_eq!(body["snapshots"], json!([]));
+}

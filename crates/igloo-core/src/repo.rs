@@ -211,9 +211,14 @@ impl Repo {
         self.warm.get(key)
     }
 
-    /// Every recorded warm snapshot with its key, in key order.
+    /// Every recorded warm snapshot (agent snapshots included) by key, in key order.
     pub fn warm_snapshots(&self) -> impl Iterator<Item = (&Digest, &WarmSnapshot)> {
         self.warm.iter()
+    }
+
+    /// Every imported image's snapshot, in image order.
+    pub fn image_snapshots(&self) -> impl Iterator<Item = SnapshotId> + '_ {
+        self.images.values().copied()
     }
 
     fn record(&mut self, event: RepoEvent) {

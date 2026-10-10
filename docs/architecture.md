@@ -315,6 +315,10 @@ composition.rs  Server: the only place naming concrete adapters
   Platform modules never import product modules. Compile time, in process.
 - **Ports.** `Clock`, `IdGenerator`, `EntityStore<E>`, `EventLog`, `Checkpoints`, `JobQueue`, `BlobStore`,
   `PolicyEngine`, `TaskSupervisor`. Each has a memory adapter and a conformance suite.
+- **Layer collection.** `LayerCollector` sweeps the blob store every hour: it deletes blobs stored
+  more than 24 hours ago that no live root reaches (snapshots recorded on repositories, snapshots
+  of sandboxes that have not ended, of builds and seals in progress). `GET /v1/storage` reports
+  the store and the latest sweep.
 
 ## 8. Worker
 

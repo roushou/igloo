@@ -9,6 +9,7 @@ mod repo;
 mod sandbox;
 mod seal;
 mod snapshot;
+mod storage;
 mod trust;
 mod usage;
 mod worker;
@@ -41,6 +42,7 @@ pub use seal::{CompleteSeal, CreateSeal, CreateSealError, FailSeal, SealModule, 
 pub use snapshot::{
     ImageImporter, RegisterSnapshot, SnapshotError, SnapshotModule, Snapshots, StoreBlob,
 };
+pub use storage::{LayerCollector, SnapshotSize, StorageUsage, Sweep};
 pub use trust::TrustSettings;
 pub use usage::WorkerUsages;
 pub use worker::{

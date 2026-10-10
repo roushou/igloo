@@ -10,6 +10,7 @@ afterEach(() => {
 });
 
 const repoRoutes = {
+  "GET /v1/storage": { blobs: 0, bytes: 0, snapshots: [] },
   [`GET /v1/repos/${REPO.id}/tasks`]: [],
   [`GET /v1/repos/${REPO.id}/runs`]: { items: [] },
 };
@@ -52,6 +53,43 @@ describe("System", () => {
     expect(within(second).getByText(/Not connected since/)).toBeInTheDocument();
     expect(within(second).getByText("This worker has not reported its usage.")).toBeInTheDocument();
     expect(within(second).queryByRole("meter")).not.toBeInTheDocument();
+  });
+
+  it("shows the blob store's size and what the last sweep reclaimed", async () => {
+    signIn();
+    stubServer(TOKEN, [REPO], {
+      ...repoRoutes,
+      "GET /v1/storage": {
+        blobs: 12,
+        bytes: 3 * 1024 ** 3,
+        snapshots: [],
+        last_sweep: {
+          at: "2026-01-01T09:00:00Z",
+          kept_blobs: 12,
+          kept_bytes: 3 * 1024 ** 3,
+          reclaimed_blobs: 4,
+          reclaimed_bytes: 512 * 1024 ** 2,
+        },
+      },
+      "GET /v1/workers": [],
+      "GET /v1/sandboxes": { items: [] },
+    });
+    renderApp("/system");
+    const store = await screen.findByRole("region", { name: "Blob store" });
+    expect(within(store).getByText("12")).toBeInTheDocument();
+    expect(within(store).getByText("3.0 GiB")).toBeInTheDocument();
+    expect(store).toHaveTextContent(/Reclaimed 512 MiB in 4 blobs; kept 3.0 GiB in 12/);
+  });
+
+  it("says no sweep has run when none has since the server started", async () => {
+    signIn();
+    stubServer(TOKEN, [REPO], {
+      ...repoRoutes,
+      "GET /v1/workers": [],
+      "GET /v1/sandboxes": { items: [] },
+    });
+    renderApp("/system");
+    expect(await screen.findByText("None since the server started")).toBeInTheDocument();
   });
 
   it("says when no worker has connected", async () => {

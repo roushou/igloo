@@ -17,7 +17,7 @@ mod store;
 #[cfg(test)]
 pub(crate) mod conformance;
 
-pub use blob::{BlobError, BlobReader, BlobStore};
+pub use blob::{BlobError, BlobInfo, BlobReader, BlobStore};
 pub use checkpoints::Checkpoints;
 pub use clock::Clock;
 pub use event_log::{

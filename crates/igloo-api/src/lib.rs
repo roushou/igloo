@@ -17,5 +17,6 @@ pub mod run;
 pub mod sandbox;
 pub mod seal;
 pub mod snapshot;
+pub mod storage;
 pub mod task;
 pub mod worker;

@@ -595,6 +595,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reports what the blob store holds and what its latest sweep reclaimed. */
+        get: operations["getStorage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{id}": {
         parameters: {
             query?: never;
@@ -1284,6 +1301,65 @@ export interface components {
             id: string;
             /** @description Layers, lowest first. */
             layers: components["schemas"]["Layer"][];
+        };
+        /** @description What the blob store holds and what its latest sweep reclaimed. */
+        StorageResource: {
+            /**
+             * Format: int64
+             * @description Blobs stored: layers and snapshot manifests.
+             */
+            blobs: number;
+            /**
+             * Format: int64
+             * @description Their total size in bytes.
+             */
+            bytes: number;
+            last_sweep?: components["schemas"]["StorageSweep"] | null;
+            /** @description The repositories' recorded warm and agent snapshots, ordered by repository then key. */
+            snapshots: components["schemas"]["StorageSnapshot"][];
+        };
+        /** @description A recorded warm or agent snapshot and its size. */
+        StorageSnapshot: {
+            /** @description The key it is recorded under. */
+            key: string;
+            /** @description The repository that recorded it (`repo_...`). */
+            repo: string;
+            /**
+             * Format: int64
+             * @description The sum of its layers' sizes in bytes, from file metadata; layers shared with other
+             *     snapshots count in each.
+             */
+            size_bytes: number;
+            /** @description The snapshot's id. */
+            snapshot: string;
+        };
+        /** @description What one sweep kept and reclaimed. */
+        StorageSweep: {
+            /**
+             * Format: date-time
+             * @description When the sweep finished.
+             */
+            at: string;
+            /**
+             * Format: int64
+             * @description Blobs left in the store.
+             */
+            kept_blobs: number;
+            /**
+             * Format: int64
+             * @description Their size in bytes.
+             */
+            kept_bytes: number;
+            /**
+             * Format: int64
+             * @description Blobs the sweep deleted.
+             */
+            reclaimed_blobs: number;
+            /**
+             * Format: int64
+             * @description Their size in bytes.
+             */
+            reclaimed_bytes: number;
         };
         /**
          * @description Where a task is.
@@ -2937,6 +3013,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageResource"];
                 };
             };
         };

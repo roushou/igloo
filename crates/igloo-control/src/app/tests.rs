@@ -10,7 +10,7 @@ use igloo_core::worker::{
     Arch, Capabilities, Connection, Os, ProtocolVersion, RuntimeKind, Worker, WorkerAction,
     WorkerError, WorkerId,
 };
-use igloo_core::{Actor, Digest, ErrorCode, Id, Labels, SystemComponent};
+use igloo_core::{Actor, Digest, ErrorCode, Id, Labels, SystemComponent, Timestamp};
 use igloo_core::{Entity, Resource};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -19,8 +19,9 @@ use uuid::Uuid;
 use super::*;
 use crate::adapters::AllowAllPolicy;
 use crate::adapters::memory::{
-    MemoryBlobStore, MemoryCheckpoints, MemoryEntityStore, MemoryEventLog, MemoryIdempotencyStore,
-    MemoryLogStore, MemoryRegistry, MemorySecretStore, SequentialIdGenerator,
+    FixedClock, MemoryBlobStore, MemoryCheckpoints, MemoryEntityStore, MemoryEventLog,
+    MemoryIdempotencyStore, MemoryLogStore, MemoryRegistry, MemorySecretStore,
+    SequentialIdGenerator,
 };
 use crate::ports::conformance::{
     BlobStoreConformance, CheckpointsConformance, EntityStoreConformance,
@@ -531,7 +532,9 @@ async fn memory_adapters_pass_their_conformance_suites() {
     .run_all()
     .await;
     BlobStoreConformance {
-        blobs: Arc::new(MemoryBlobStore::default()),
+        blobs: Arc::new(MemoryBlobStore::new(Arc::new(FixedClock::new(
+            Timestamp::new(jiff::Timestamp::constant(1_767_225_600, 0)),
+        )))),
     }
     .run_all()
     .await;
