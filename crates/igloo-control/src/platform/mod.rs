@@ -31,8 +31,8 @@ pub use job::{
     StartJob, SubmitJob, SubmitJobError,
 };
 pub use repo::{
-    DeleteSecret, RecordImage, RecordWarmSnapshot, RegisterRepo, RepoError, RepoModule,
-    RepoQueries, SetSecret,
+    DeleteSecret, ForgetWarmSnapshots, RecordImage, RecordWarmSnapshot, RecordWarmUse,
+    RegisterRepo, RepoError, RepoModule, RepoQueries, SetSecret,
 };
 pub use sandbox::{
     CreateSandbox, PlacementError, RecordSandboxStatus, SandboxModule, SandboxQueries,

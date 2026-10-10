@@ -1579,9 +1579,19 @@ async fn a_repository_lists_its_recorded_snapshots() {
     assert_eq!(listed[0]["commit"], "a".repeat(40));
     assert_eq!(listed[0]["built_at"], at(30));
     assert!(
+        listed[0].get("last_used_at").is_none(),
+        "no use is recorded yet"
+    );
+    assert!(
         listed[0].get("size_bytes").is_none(),
         "sizes are not reported yet"
     );
+
+    repo.entity_mut()
+        .warm_used(key, START.saturating_add(SignedDuration::from_secs(90)));
+    commit_at(&repos, &mut repo, 90).await;
+    let (_, used, _) = Call::new(Method::GET, &uri).send(&router).await;
+    assert_eq!(used[0]["last_used_at"], at(90));
 
     let (status, _, _) = Call::new(Method::GET, "/v1/repos/repo_unknown/snapshots")
         .send(&router)

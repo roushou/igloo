@@ -18,7 +18,8 @@ use super::pipeline::SandboxSettings;
 use super::run::{Planned, Run, RunAction, WarmBuild};
 use crate::app::{AppError, CommandBus, Reconciler, RequestContext};
 use crate::platform::{
-    CreateSandbox, RepoQueries, RepoSnapshots, StartBuild, StopSandbox, SubmitJob, WarmRecipe,
+    CreateSandbox, RecordWarmUse, RepoQueries, RepoSnapshots, StartBuild, StopSandbox, SubmitJob,
+    WarmRecipe,
 };
 use crate::ports::{IdGenerator, IdGeneratorExt};
 
@@ -89,6 +90,11 @@ impl Runner {
                     .warm_key(repo.id(), run.commit(), base, &recipe)
                     .await?;
                 if let Some(built) = repo.warm(&key) {
+                    self.dispatch(RecordWarmUse {
+                        repo: repo.id(),
+                        keys: vec![key],
+                    })
+                    .await?;
                     let snapshot = self
                         .checkouts
                         .checkout(repo.id(), run.commit(), base, Some(built))

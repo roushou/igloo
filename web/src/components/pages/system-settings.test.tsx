@@ -284,7 +284,7 @@ describe("Repository", () => {
 });
 
 describe("System snapshots", () => {
-  it("lists the repository's warm and agent snapshots with size and build time", async () => {
+  it("lists the repository's warm and agent snapshots with size, build time and last use", async () => {
     signIn();
     stubServer(TOKEN, [REPO], {
       ...repoRoutes,
@@ -297,6 +297,7 @@ describe("System snapshots", () => {
           commit: "c".repeat(40),
           size_bytes: 3 * 1024 * 1024 * 1024,
           built_at: "2026-01-01T09:00:00Z",
+          last_used_at: "2026-01-02T09:00:00Z",
         },
         { key: id("key", 2), snapshot: id("snap", 2), commit: "d".repeat(40) },
       ],
@@ -306,7 +307,7 @@ describe("System snapshots", () => {
     // A header row, then one row per recorded snapshot.
     await within(table).findByText("3.0 GiB");
     expect(within(table).getAllByRole("row")).toHaveLength(3);
-    expect(within(table).getAllByRole("time")).toHaveLength(1);
+    expect(within(table).getAllByRole("time")).toHaveLength(2);
   });
 
   it("says when none was built", async () => {

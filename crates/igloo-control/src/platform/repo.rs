@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use igloo_core::repo::{BranchName, Repo, RepoId, RepoLocation, SecretName, WarmSnapshot};
 use igloo_core::snapshot::SnapshotId;
-use igloo_core::{Digest, Entity, ErrorCode};
+use igloo_core::{Digest, Entity, ErrorCode, Timestamp};
 
 use crate::app::{
     AppError, Command, CommandHandler, EntityHandler, Extension, InstallError, PlatformBuilder,
@@ -50,6 +50,35 @@ pub struct RecordWarmSnapshot {
     pub key: Digest,
     /// The snapshot and its commit.
     pub warm: WarmSnapshot,
+}
+
+/// Records that the snapshots under `keys` were used. Keys without a snapshot, and keys used
+/// within the last hour, record nothing.
+pub struct RecordWarmUse {
+    /// The repository.
+    pub repo: RepoId,
+    /// The keys.
+    pub keys: Vec<Digest>,
+}
+
+/// Forgets the snapshots under `keys` that were last used at or before `unused_since`.
+pub struct ForgetWarmSnapshots {
+    /// The repository.
+    pub repo: RepoId,
+    /// The keys.
+    pub keys: Vec<Digest>,
+    /// The cutoff: a key used after it is kept.
+    pub unused_since: Timestamp,
+}
+
+impl Command for RecordWarmUse {
+    type Output = ();
+    const NAME: &'static str = "repo.record_warm_use";
+}
+
+impl Command for ForgetWarmSnapshots {
+    type Output = ();
+    const NAME: &'static str = "repo.forget_warm_snapshots";
 }
 
 /// Records the snapshot a container image was imported as.
@@ -285,6 +314,26 @@ impl Extension for RepoModule {
             |command: &RecordImage| command.repo,
             |repo: &mut Repo, command: &RecordImage, _| {
                 repo.image_imported(command.image.clone(), command.snapshot);
+            },
+        ))?;
+        platform.command(EntityHandler::infallible(
+            Arc::clone(&store),
+            Arc::clone(&ports.clock),
+            |command: &RecordWarmUse| command.repo,
+            |repo: &mut Repo, command: &RecordWarmUse, now| {
+                for key in &command.keys {
+                    repo.warm_used(*key, now);
+                }
+            },
+        ))?;
+        platform.command(EntityHandler::infallible(
+            Arc::clone(&store),
+            Arc::clone(&ports.clock),
+            |command: &ForgetWarmSnapshots| command.repo,
+            |repo: &mut Repo, command: &ForgetWarmSnapshots, _| {
+                for key in &command.keys {
+                    repo.forget_warm_unused_since(*key, command.unused_since);
+                }
             },
         ))?;
         platform.command(EntityHandler::infallible(

@@ -150,7 +150,7 @@ impl RestApi {
                     RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
                     RunQueries::new(platform.store::<Run>()?),
                     Arc::clone(&ports.forge),
-                    bus,
+                    bus.clone(),
                 ),
                 change_heads: ChangeHeads::new(
                     RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
@@ -162,7 +162,7 @@ impl RestApi {
                 ),
                 forge: Arc::clone(&ports.forge),
                 secrets: Arc::clone(&ports.secrets),
-                collector: LayerCollector::new(platform)?,
+                collector: LayerCollector::new(platform, bus)?,
                 snapshots: Snapshots::new(Arc::clone(&ports.blobs)),
                 importer: ImageImporter::new(Arc::clone(&ports.registry), Arc::clone(&ports.blobs)),
                 blobs: Arc::clone(&ports.blobs),

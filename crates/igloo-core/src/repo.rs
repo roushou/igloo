@@ -24,6 +24,7 @@ pub struct Repo {
     token: Option<SecretName>,
     warm: BTreeMap<Digest, WarmSnapshot>,
     images: BTreeMap<String, SnapshotId>,
+    used: BTreeMap<Digest, Timestamp>,
     registered_at: Timestamp,
     events: Vec<RepoEvent>,
 }
@@ -114,6 +115,18 @@ pub enum RepoEvent {
         /// The snapshot and its commit.
         warm: WarmSnapshot,
     },
+    /// The snapshot recorded under `key` was used: a checkout or a sandbox was made over it.
+    WarmSnapshotUsed {
+        /// The key.
+        key: Digest,
+        /// When.
+        at: Timestamp,
+    },
+    /// The snapshot recorded under `key` was forgotten; the key is rebuilt when next needed.
+    WarmSnapshotForgotten {
+        /// The key.
+        key: Digest,
+    },
 }
 
 /// Why a repository value is invalid.
@@ -134,6 +147,9 @@ pub enum RepoValueError {
 }
 
 impl Repo {
+    /// The shortest time, in seconds, between two recorded uses of one snapshot.
+    pub const USE_INTERVAL_SECONDS: i64 = 3600;
+
     /// A newly registered repository.
     #[must_use]
     pub fn new(
@@ -174,6 +190,7 @@ impl Repo {
             token,
             warm: BTreeMap::new(),
             images: BTreeMap::new(),
+            used: BTreeMap::new(),
             registered_at: at,
             events: Vec::new(),
         }
@@ -214,6 +231,37 @@ impl Repo {
     /// Every recorded warm snapshot (agent snapshots included) by key, in key order.
     pub fn warm_snapshots(&self) -> impl Iterator<Item = (&Digest, &WarmSnapshot)> {
         self.warm.iter()
+    }
+
+    /// Records that the snapshot under `key` was used at `now`. Nothing is recorded when `key`
+    /// has no snapshot or a use was recorded less than [`Self::USE_INTERVAL_SECONDS`] before.
+    pub fn warm_used(&mut self, key: Digest, now: Timestamp) {
+        if !self.warm.contains_key(&key) {
+            return;
+        }
+        let window = jiff::SignedDuration::from_secs(Self::USE_INTERVAL_SECONDS);
+        let recent = self
+            .used
+            .get(&key)
+            .is_some_and(|last| now.duration_since(*last) < window);
+        if !recent {
+            self.record(RepoEvent::WarmSnapshotUsed { key, at: now });
+        }
+    }
+
+    /// Forgets the snapshot recorded under `key`, so its layers are no longer a root. Nothing is
+    /// recorded unless a use was recorded and it was at or before `since`.
+    pub fn forget_warm_unused_since(&mut self, key: Digest, since: Timestamp) {
+        if self.used.get(&key).is_some_and(|last| *last <= since) {
+            self.record(RepoEvent::WarmSnapshotForgotten { key });
+        }
+    }
+
+    /// When the snapshot under `key` was last used; `None` when it has no snapshot or no use was
+    /// recorded.
+    #[must_use]
+    pub fn warm_last_used(&self, key: &Digest) -> Option<Timestamp> {
+        self.used.get(key).copied()
     }
 
     /// Every imported image's snapshot, in image order.
@@ -265,6 +313,8 @@ impl Event for RepoEvent {
             Self::SecretDeleted { .. } => "igloo.repo.secret_deleted",
             Self::WarmSnapshotRecorded { .. } => "igloo.repo.warm_snapshot_recorded",
             Self::ImageImported { .. } => "igloo.repo.image_imported",
+            Self::WarmSnapshotUsed { .. } => "igloo.repo.warm_snapshot_used",
+            Self::WarmSnapshotForgotten { .. } => "igloo.repo.warm_snapshot_forgotten",
         }
     }
 }
@@ -305,6 +355,13 @@ impl Entity for Repo {
             | RepoEvent::SecretDeleted { .. } => {}
             RepoEvent::WarmSnapshotRecorded { key, warm } => {
                 self.warm.insert(*key, warm.clone());
+            }
+            RepoEvent::WarmSnapshotUsed { key, at } => {
+                self.used.insert(*key, *at);
+            }
+            RepoEvent::WarmSnapshotForgotten { key } => {
+                self.warm.remove(key);
+                self.used.remove(key);
             }
             RepoEvent::ImageImported { image, snapshot } => {
                 self.images.insert(image.clone(), *snapshot);
@@ -596,6 +653,51 @@ mod tests {
         assert_eq!(scenario.state().warm(&Digest::from_blake3([9; 32])), None);
     }
 
+    fn recorded(key: Digest) -> RepoEvent {
+        RepoEvent::WarmSnapshotRecorded {
+            key,
+            warm: WarmSnapshot {
+                snapshot: SnapshotId::from(Digest::from_blake3([2; 32])),
+                commit: "a".repeat(40).parse().expect("commit"),
+            },
+        }
+    }
+
+    #[test]
+    fn uses_are_recorded_at_most_once_an_hour_and_only_for_recorded_keys() {
+        let key = Digest::from_blake3([1; 32]);
+        let at = |minutes: i64| S::NOW.saturating_add(jiff::SignedDuration::from_mins(minutes));
+        let scenario = S::given([registered(), recorded(key)])
+            .when(|repo, _| repo.warm_used(Digest::from_blake3([9; 32]), at(0)))
+            .then([])
+            .when(|repo, _| repo.warm_used(key, at(0)))
+            .then([RepoEvent::WarmSnapshotUsed { key, at: at(0) }])
+            .when(|repo, _| repo.warm_used(key, at(59)))
+            .then([])
+            .when(|repo, _| repo.warm_used(key, at(60)))
+            .then([RepoEvent::WarmSnapshotUsed { key, at: at(60) }]);
+        assert_eq!(scenario.state().warm_last_used(&key), Some(at(60)));
+    }
+
+    #[test]
+    fn a_snapshot_used_after_the_cutoff_is_kept_and_a_forgotten_one_is_dropped() {
+        let key = Digest::from_blake3([1; 32]);
+        let before = S::NOW.saturating_add(jiff::SignedDuration::from_secs(-1));
+        let scenario = S::given([
+            registered(),
+            recorded(key),
+            RepoEvent::WarmSnapshotUsed { key, at: S::NOW },
+        ])
+        .when(|repo, _| repo.forget_warm_unused_since(key, before))
+        .then([])
+        .when(|repo, _| repo.forget_warm_unused_since(key, S::NOW))
+        .then([RepoEvent::WarmSnapshotForgotten { key }])
+        .when(|repo, _| repo.forget_warm_unused_since(key, S::NOW))
+        .then([]);
+        assert_eq!(scenario.state().warm(&key), None);
+        assert_eq!(scenario.state().warm_last_used(&key), None);
+    }
+
     #[test]
     fn secret_changes_are_recorded_by_name() {
         let name: SecretName = "API_TOKEN".parse().expect("secret");
@@ -632,6 +734,13 @@ mod tests {
                     snapshot: SnapshotId::from(Digest::from_blake3([2; 32])),
                     commit: "a".repeat(40).parse().expect("commit"),
                 },
+            },
+            RepoEvent::WarmSnapshotUsed {
+                key: Digest::from_blake3([1; 32]),
+                at: S::NOW,
+            },
+            RepoEvent::WarmSnapshotForgotten {
+                key: Digest::from_blake3([1; 32]),
             },
         ];
         insta::assert_json_snapshot!(events);

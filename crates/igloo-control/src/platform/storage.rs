@@ -7,13 +7,14 @@ use igloo_core::repo::{Repo, RepoId};
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::{Seal, SealPhase};
 use igloo_core::snapshot::{SnapshotId, SnapshotLayer};
-use igloo_core::{Digest, Entity, Resource, Timestamp};
+use igloo_core::{Actor, Digest, Entity, Resource, SystemComponent, Timestamp};
 use jiff::SignedDuration;
 use tokio_util::sync::CancellationToken;
 
 use super::Snapshots;
-use crate::app::{AppError, InstallError, PlatformBuilder};
-use crate::ports::{BlobStore, Clock, EntityStore};
+use super::{ForgetWarmSnapshots, RecordWarmUse};
+use crate::app::{AppError, Command, CommandBus, InstallError, PlatformBuilder, RequestContext};
+use crate::ports::{BlobStore, Clock, EntityStore, IdGenerator, IdGeneratorExt};
 
 /// What one sweep of the blob store kept and reclaimed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +64,10 @@ pub struct SnapshotSize {
 /// agent and imported), the snapshots of sandboxes that have not ended, and those of builds
 /// and seals in progress; a root keeps its manifest and every layer it names. Snapshot
 /// manifests are flat, so the layers of a base are kept through the snapshots built over it.
-/// A sweep that cannot read a root deletes nothing.
+/// Before each sweep, a repository forgets the warm and agent snapshots it recorded and none used
+/// for [`LayerCollector::RETENTION`], keeping its most recently used one and those a live sandbox
+/// runs over; a forgotten key is rebuilt when next needed. A sweep that cannot read a root
+/// deletes nothing.
 #[derive(Clone)]
 pub struct LayerCollector {
     blobs: Arc<dyn BlobStore>,
@@ -73,6 +77,8 @@ pub struct LayerCollector {
     builds: Arc<dyn EntityStore<Build>>,
     seals: Arc<dyn EntityStore<Seal>>,
     clock: Arc<dyn Clock>,
+    ids: Arc<dyn IdGenerator>,
+    bus: CommandBus,
     last: Arc<Mutex<Option<Sweep>>>,
 }
 
@@ -80,11 +86,15 @@ impl LayerCollector {
     /// How long a blob is kept whether or not anything references it.
     pub const GRACE: Duration = Duration::from_hours(24);
 
+    /// How long a recorded warm or agent snapshot may go unused before a sweep forgets it.
+    pub const RETENTION: Duration = Duration::from_hours(7 * 24);
+
     /// How often [`Self::run`] sweeps.
     pub const INTERVAL: Duration = Duration::from_hours(1);
 
-    /// A collector over the blobs and stores `platform` was given.
-    pub fn new(platform: &PlatformBuilder) -> Result<Self, InstallError> {
+    /// A collector over the blobs and stores `platform` was given, recording snapshot use and
+    /// forgetting through `bus`.
+    pub fn new(platform: &PlatformBuilder, bus: CommandBus) -> Result<Self, InstallError> {
         let ports = platform.ports();
         Ok(Self {
             blobs: Arc::clone(&ports.blobs),
@@ -94,6 +104,8 @@ impl LayerCollector {
             builds: platform.store::<Build>()?,
             seals: platform.store::<Seal>()?,
             clock: Arc::clone(&ports.clock),
+            ids: Arc::clone(&ports.ids),
+            bus,
             last: Arc::default(),
         })
     }
@@ -119,10 +131,11 @@ impl LayerCollector {
         }
     }
 
-    /// Deletes every unreachable blob stored more than [`Self::GRACE`] ago and records the
-    /// sweep. Blobs are listed before roots are read, so a root recorded during the sweep is
-    /// never missed for a blob the listing saw.
+    /// Forgets the snapshots nobody uses any more, then deletes every unreachable blob stored
+    /// more than [`Self::GRACE`] ago and records the sweep. Blobs are listed before roots are
+    /// read, so a root recorded during the sweep is never missed for a blob the listing saw.
     pub async fn sweep(&self) -> Result<Sweep, AppError> {
+        self.retain().await?;
         let listed = self.blobs.list().await?;
         let reachable = self.reachable().await?;
         let now = self.clock.now();
@@ -148,6 +161,107 @@ impl LayerCollector {
         sweep.at = self.clock.now();
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(sweep);
         Ok(sweep)
+    }
+
+    /// Stamps the recorded snapshots that have no recorded use with the current time, then
+    /// forgets those of each repository last used more than [`Self::RETENTION`] ago, except
+    /// its most recently used one and any a sandbox that has not ended runs over.
+    async fn retain(&self) -> Result<(), AppError> {
+        let now = self.clock.now();
+        let retention = SignedDuration::try_from(Self::RETENTION).unwrap_or(SignedDuration::MAX);
+        let cutoff = now.saturating_add(-retention);
+        let live = self.live_sandbox_layers().await?;
+        for repo in self.repos.all().await? {
+            let unstamped: Vec<Digest> = repo
+                .warm_snapshots()
+                .filter(|(key, _)| repo.warm_last_used(key).is_none())
+                .map(|(key, _)| *key)
+                .collect();
+            if !unstamped.is_empty() {
+                self.dispatch(RecordWarmUse {
+                    repo: repo.id(),
+                    keys: unstamped,
+                })
+                .await?;
+            }
+            let last_used = |key: &Digest| repo.warm_last_used(key).unwrap_or(now);
+            let newest = repo
+                .warm_snapshots()
+                .max_by_key(|(key, _)| (last_used(key), **key))
+                .map(|(key, _)| *key);
+            let mut stale = Vec::new();
+            for (key, warm) in repo.warm_snapshots() {
+                if Some(*key) != newest
+                    && last_used(key) <= cutoff
+                    && !self.is_under(warm.snapshot, &live).await?
+                {
+                    stale.push(*key);
+                }
+            }
+            if !stale.is_empty() {
+                self.dispatch(ForgetWarmSnapshots {
+                    repo: repo.id(),
+                    keys: stale,
+                    unused_since: cutoff,
+                })
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The snapshot id and layer digests of every sandbox that has not ended.
+    async fn live_sandbox_layers(&self) -> Result<Vec<(SnapshotId, Vec<Digest>)>, AppError> {
+        let mut live = Vec::new();
+        for sandbox in self.sandboxes.all().await? {
+            if sandbox.status().phase().is_terminal() {
+                continue;
+            }
+            let id = sandbox.spec().snapshot();
+            let layers = match self.snapshots.manifest(id).await? {
+                Some(manifest) => manifest
+                    .layers()
+                    .iter()
+                    .map(SnapshotLayer::digest)
+                    .collect(),
+                None => Vec::new(),
+            };
+            live.push((id, layers));
+        }
+        Ok(live)
+    }
+
+    /// Whether a sandbox in `live` runs over `snapshot`: it is that snapshot, or its layers
+    /// begin with all of `snapshot`'s.
+    async fn is_under(
+        &self,
+        snapshot: SnapshotId,
+        live: &[(SnapshotId, Vec<Digest>)],
+    ) -> Result<bool, AppError> {
+        if live.is_empty() {
+            return Ok(false);
+        }
+        let layers: Vec<Digest> = match self.snapshots.manifest(snapshot).await? {
+            Some(manifest) => manifest
+                .layers()
+                .iter()
+                .map(SnapshotLayer::digest)
+                .collect(),
+            None => Vec::new(),
+        };
+        Ok(live
+            .iter()
+            .any(|(id, over)| *id == snapshot || (!layers.is_empty() && over.starts_with(&layers))))
+    }
+
+    async fn dispatch<C: Command>(&self, command: C) -> Result<C::Output, AppError> {
+        let context = RequestContext::new(
+            Actor::System {
+                component: SystemComponent::Controller,
+            },
+            self.ids.next(),
+        );
+        self.bus.dispatch(command, context).await
     }
 
     /// What the store holds, the latest sweep, and the size of every recorded snapshot.
@@ -238,8 +352,8 @@ mod tests {
     use super::*;
     use crate::app::{CommandBus, ControllerSettings, TaskSupervisor};
     use crate::platform::{
-        CreateSandbox, RecordWarmSnapshot, RegisterRepo, RegisterSnapshot, RepoModule,
-        SandboxModule, SnapshotModule, StopSandbox, StoreBlob,
+        CreateSandbox, RecordWarmSnapshot, RecordWarmUse, RegisterRepo, RegisterSnapshot,
+        RepoModule, SandboxModule, SnapshotModule, StopSandbox, StoreBlob,
     };
     use crate::testing::{MemoryPlatform, context};
 
@@ -248,6 +362,7 @@ mod tests {
         blobs: Arc<dyn BlobStore>,
         collector: LayerCollector,
         repo: RepoId,
+        repos: Arc<dyn EntityStore<Repo>>,
         supervisor: TaskSupervisor,
     }
 
@@ -268,7 +383,8 @@ mod tests {
                 .expect("sandbox module");
             builder.install(SnapshotModule).expect("snapshot module");
             builder.install(RepoModule).expect("repo module");
-            let collector = LayerCollector::new(&builder).expect("collector");
+            let repos = builder.store::<Repo>().expect("repo store");
+            let collector = LayerCollector::new(&builder, builder.bus()).expect("collector");
             let supervisor = TaskSupervisor::new();
             let bus = builder.build().start(&supervisor);
             let repo = bus
@@ -294,6 +410,7 @@ mod tests {
                 blobs: stores.blobs,
                 collector,
                 repo,
+                repos,
                 supervisor,
             }
         }
@@ -352,6 +469,32 @@ mod tests {
                 )
                 .await
                 .expect("record warm");
+        }
+
+        async fn use_warm(&self, keys: &[u8]) {
+            self.bus
+                .dispatch(
+                    RecordWarmUse {
+                        repo: self.repo,
+                        keys: keys
+                            .iter()
+                            .map(|key| Digest::from_blake3([*key; 32]))
+                            .collect(),
+                    },
+                    context(),
+                )
+                .await
+                .expect("use warm");
+        }
+
+        async fn repo(&self) -> Repo {
+            self.repos
+                .load(self.repo)
+                .await
+                .expect("load")
+                .expect("repo")
+                .entity()
+                .clone()
         }
 
         async fn sandbox(&self, snapshot: SnapshotId) -> SandboxId {
@@ -459,6 +602,119 @@ mod tests {
         assert!(!fixture.has(layers[0]).await);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_unused_for_seven_days_is_forgotten_and_its_layers_reclaimed() {
+        let fixture = Fixture::new().await;
+        let (stale, stale_layers) = fixture.snapshot(&[b"stale deps"]).await;
+        let (used, used_layers) = fixture.snapshot(&[b"used deps"]).await;
+        fixture.record_warm(1, stale).await;
+        fixture.record_warm(2, used).await;
+        fixture.use_warm(&[1, 2]).await;
+
+        tokio::time::advance(LayerCollector::RETENTION + Duration::from_hours(1)).await;
+        fixture.use_warm(&[2]).await;
+        fixture.collector.sweep().await.expect("sweep");
+
+        let repo = fixture.repo().await;
+        assert_eq!(repo.warm(&Digest::from_blake3([1; 32])), None, "forgotten");
+        assert!(repo.warm(&Digest::from_blake3([2; 32])).is_some());
+        assert!(!fixture.has(*stale.as_digest()).await);
+        assert!(!fixture.has(stale_layers[0]).await);
+        assert!(fixture.has(*used.as_digest()).await);
+        assert!(fixture.has(used_layers[0]).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_used_within_seven_days_is_kept() {
+        let fixture = Fixture::new().await;
+        let (old, _) = fixture.snapshot(&[b"old"]).await;
+        let (newer, _) = fixture.snapshot(&[b"newer"]).await;
+        fixture.record_warm(1, old).await;
+        fixture.record_warm(2, newer).await;
+        fixture.use_warm(&[1]).await;
+
+        tokio::time::advance(Duration::from_hours(7 * 24 - 1)).await;
+        fixture.use_warm(&[2]).await;
+        fixture.collector.sweep().await.expect("sweep");
+
+        assert_eq!(fixture.repo().await.warm_snapshots().count(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_most_recently_used_snapshot_is_kept_however_old() {
+        let fixture = Fixture::new().await;
+        let (older, _) = fixture.snapshot(&[b"older"]).await;
+        let (latest, _) = fixture.snapshot(&[b"latest"]).await;
+        fixture.record_warm(1, older).await;
+        fixture.record_warm(2, latest).await;
+        fixture.use_warm(&[1]).await;
+        tokio::time::advance(Duration::from_hours(2)).await;
+        fixture.use_warm(&[2]).await;
+
+        tokio::time::advance(LayerCollector::RETENTION * 4).await;
+        fixture.collector.sweep().await.expect("sweep");
+
+        let repo = fixture.repo().await;
+        assert_eq!(repo.warm(&Digest::from_blake3([1; 32])), None);
+        assert!(repo.warm(&Digest::from_blake3([2; 32])).is_some());
+        assert!(fixture.has(*latest.as_digest()).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_under_a_live_sandbox_is_kept_until_the_sandbox_ends() {
+        let fixture = Fixture::new().await;
+        let (under, _) = fixture.snapshot(&[b"warm deps"]).await;
+        let (latest, _) = fixture.snapshot(&[b"latest"]).await;
+        fixture.record_warm(1, under).await;
+        fixture.record_warm(2, latest).await;
+        fixture.use_warm(&[1]).await;
+        let (checkout, _) = fixture.snapshot(&[b"warm deps", b"checkout"]).await;
+        let sandbox = fixture.sandbox(checkout).await;
+
+        tokio::time::advance(LayerCollector::RETENTION + Duration::from_hours(1)).await;
+        fixture.use_warm(&[2]).await;
+        fixture.collector.sweep().await.expect("sweep");
+        assert!(
+            fixture
+                .repo()
+                .await
+                .warm(&Digest::from_blake3([1; 32]))
+                .is_some(),
+            "a live sandbox runs over it"
+        );
+
+        fixture
+            .bus
+            .dispatch(StopSandbox { sandbox }, context())
+            .await
+            .expect("stop");
+        fixture.collector.sweep().await.expect("sweep");
+        assert_eq!(
+            fixture.repo().await.warm(&Digest::from_blake3([1; 32])),
+            None
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_with_no_recorded_use_starts_its_seven_days_at_the_first_sweep() {
+        let fixture = Fixture::new().await;
+        let (first, _) = fixture.snapshot(&[b"first"]).await;
+        let (second, _) = fixture.snapshot(&[b"second"]).await;
+        fixture.record_warm(1, first).await;
+        fixture.record_warm(2, second).await;
+
+        tokio::time::advance(LayerCollector::RETENTION * 2).await;
+        fixture.collector.sweep().await.expect("sweep");
+        assert_eq!(fixture.repo().await.warm_snapshots().count(), 2);
+
+        tokio::time::advance(LayerCollector::RETENTION + Duration::from_hours(1)).await;
+        fixture.collector.sweep().await.expect("sweep");
+        assert_eq!(
+            fixture.repo().await.warm_snapshots().count(),
+            1,
+            "only the most recently used remains"
+        );
+    }
     #[tokio::test(start_paused = true)]
     async fn a_second_sweep_reclaims_nothing() {
         let fixture = Fixture::new().await;

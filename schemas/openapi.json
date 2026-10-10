@@ -1204,7 +1204,7 @@
         "tags": [
           "repos"
         ],
-        "summary": "Lists the snapshots a repository recorded under keys, warm and agent, ordered by key. Sizes\nare not reported yet.",
+        "summary": "Lists the snapshots a repository recorded under keys, warm and agent, ordered by key, with\nwhen each was last used. Sizes are not reported yet.",
         "operationId": "listRepoSnapshots",
         "parameters": [
           {
@@ -4097,6 +4097,14 @@
           "key": {
             "type": "string",
             "description": "What it was built from: a digest of its base, build command and lockfiles."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a run's checkout or a task's sandbox was last made over it, at hour precision; absent\nuntil a use is recorded."
           },
           "size_bytes": {
             "type": [

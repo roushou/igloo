@@ -317,8 +317,11 @@ composition.rs  Server: the only place naming concrete adapters
   `PolicyEngine`, `TaskSupervisor`. Each has a memory adapter and a conformance suite.
 - **Layer collection.** `LayerCollector` sweeps the blob store every hour: it deletes blobs stored
   more than 24 hours ago that no live root reaches (snapshots recorded on repositories, snapshots
-  of sandboxes that have not ended, of builds and seals in progress). `GET /v1/storage` reports
-  the store and the latest sweep.
+  of sandboxes that have not ended, of builds and seals in progress). Before each sweep, each
+  repository forgets the warm and agent snapshots unused for 7 days, keeping its most recently
+  used one and those a live sandbox runs over; use is recorded at most hourly when a run or task
+  checks out over a snapshot. `GET /v1/storage` reports the store and the latest sweep;
+  `GET /v1/repos/{id}/snapshots` reports each snapshot's last use.
 
 ## 8. Worker
 

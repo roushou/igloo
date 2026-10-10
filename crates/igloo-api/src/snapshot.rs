@@ -169,6 +169,11 @@ pub struct WarmSnapshotResource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
     pub built_at: Option<Timestamp>,
+    /// When a run's checkout or a task's sandbox was last made over it, at hour precision; absent
+    /// until a use is recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_used_at: Option<Timestamp>,
 }
 
 impl WarmSnapshotResource {
@@ -185,6 +190,7 @@ impl WarmSnapshotResource {
             commit: commit.into(),
             size_bytes: None,
             built_at: None,
+            last_used_at: None,
         }
     }
 
@@ -199,6 +205,13 @@ impl WarmSnapshotResource {
     #[must_use]
     pub const fn with_built_at(mut self, at: Timestamp) -> Self {
         self.built_at = Some(at);
+        self
+    }
+
+    /// Sets when it was last used.
+    #[must_use]
+    pub const fn with_last_used_at(mut self, at: Timestamp) -> Self {
+        self.last_used_at = Some(at);
         self
     }
 }

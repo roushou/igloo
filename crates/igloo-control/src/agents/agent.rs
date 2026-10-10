@@ -21,8 +21,8 @@ use super::task::{Prepared, Task, TaskAction};
 use crate::app::{AppError, Command, CommandBus, Reconciler, RequestContext};
 use crate::ci::{Environment, Environments};
 use crate::platform::{
-    ChangeHeads, ChangeQueries, CreateSandbox, OpenChange, RepoQueries, RepoSnapshots,
-    ReviseChange, StartBuild, StopSandbox, SubmitJob, WarmRecipe,
+    ChangeHeads, ChangeQueries, CreateSandbox, OpenChange, RecordWarmUse, RepoQueries,
+    RepoSnapshots, ReviseChange, StartBuild, StopSandbox, SubmitJob, WarmRecipe,
 };
 use crate::ports::{Expected, Forge, IdGenerator, IdGeneratorExt, LogStore};
 
@@ -150,6 +150,7 @@ impl Agent {
     /// agent snapshot over it, then the checkout of the task's commit over that.
     async fn step(&self, repo: &Repo, prepared: &Prepared) -> Result<Step, AppError> {
         let commit = &prepared.commit;
+        let mut used = Vec::new();
         let (key, over) = if let Some(warm) = &prepared.warm {
             let recipe = WarmRecipe {
                 command: warm.command.clone(),
@@ -171,6 +172,7 @@ impl Agent {
                 };
                 return Self::build_step(repo, prepared, recipe);
             };
+            used.push(key);
             (key, built.clone())
         } else {
             let cold = self.cold(repo, prepared).await?;
@@ -206,10 +208,18 @@ impl Agent {
                 };
                 return Self::build_step(repo, prepared, recipe);
             };
+            used.push(agent_key);
             built.clone()
         } else {
             over
         };
+        if !used.is_empty() {
+            self.dispatch(RecordWarmUse {
+                repo: repo.id(),
+                keys: used,
+            })
+            .await?;
+        }
         let snapshot = self
             .checkouts
             .checkout(repo.id(), commit, None, Some(&agent))

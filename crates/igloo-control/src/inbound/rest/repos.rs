@@ -145,8 +145,8 @@ pub(super) async fn snapshot(
     ))
 }
 
-/// Lists the snapshots a repository recorded under keys, warm and agent, ordered by key. Sizes
-/// are not reported yet.
+/// Lists the snapshots a repository recorded under keys, warm and agent, ordered by key, with
+/// when each was last used. Sizes are not reported yet.
 #[utoipa::path(
     get,
     operation_id = "listRepoSnapshots",
@@ -174,6 +174,9 @@ pub(super) async fn snapshots(
             warm.snapshot.to_string(),
             warm.commit.to_string(),
         );
+        if let Some(at) = repo.warm_last_used(key) {
+            resource = resource.with_last_used_at(at);
+        }
         if let Some(at) = state
             .timings
             .built(&id.to_string(), &key.to_string())

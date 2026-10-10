@@ -364,8 +364,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Lists the snapshots a repository recorded under keys, warm and agent, ordered by key. Sizes
-         *     are not reported yet.
+         * Lists the snapshots a repository recorded under keys, warm and agent, ordered by key, with
+         *     when each was last used. Sizes are not reported yet.
          */
         get: operations["listRepoSnapshots"];
         put?: never;
@@ -1488,6 +1488,12 @@ export interface components {
             commit: string;
             /** @description What it was built from: a digest of its base, build command and lockfiles. */
             key: string;
+            /**
+             * Format: date-time
+             * @description When a run's checkout or a task's sandbox was last made over it, at hour precision; absent
+             *     until a use is recorded.
+             */
+            last_used_at?: string | null;
             /**
              * Format: int64
              * @description The bytes of its layer blobs; absent until the blob store reports sizes.

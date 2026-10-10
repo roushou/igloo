@@ -162,7 +162,7 @@ impl Server {
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(Self::DEV_USER)),
         };
-        let collector = LayerCollector::new(&builder)?;
+        let collector = LayerCollector::new(&builder, builder.bus())?;
         let rest = RestApi::new(
             &builder,
             builder.bus(),

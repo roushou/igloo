@@ -296,17 +296,18 @@ function SandboxRow({
   );
 }
 
-/** What a snapshot row can say; `kind`, `size` and `builtAt` appear once the server records them. */
+/** What a snapshot row can say; `kind`, `size`, `builtAt` and `lastUsedAt` appear once the server records them. */
 export type SnapshotRow = {
   id: string;
   sandboxes: number;
   kind?: "warm" | "agent";
   size?: number;
   builtAt?: string;
+  lastUsedAt?: string;
 };
 
 /**
- * The repository's recorded snapshots, with when they were built and their size once the blob
+ * The repository's recorded snapshots, with when they were built and last used, and their size once the blob
  * store reports it, then any other snapshot a sandbox runs from; each with how many sandboxes
  * use it.
  */
@@ -331,6 +332,7 @@ function Snapshots({
     sandboxes: counts.get(snapshot.snapshot) ?? 0,
     size: snapshot.size_bytes ?? sizes.get(snapshot.snapshot) ?? undefined,
     builtAt: snapshot.built_at ?? undefined,
+    lastUsedAt: snapshot.last_used_at ?? undefined,
   }));
   for (const [id, count] of counts) {
     if (!rows.some((row) => row.id === id)) rows.push({ id, sandboxes: count });
@@ -350,6 +352,7 @@ function Snapshots({
               <th className="px-4 py-2 font-medium">Kind</th>
               <th className="px-4 py-2 text-right font-medium">Size</th>
               <th className="px-4 py-2 text-right font-medium">Built</th>
+              <th className="px-4 py-2 text-right font-medium">Last used</th>
               <th className="px-4 py-2 text-right font-medium">Sandboxes</th>
             </tr>
           </thead>
@@ -365,6 +368,9 @@ function Snapshots({
                 </td>
                 <td className="px-4 py-2 text-right text-muted-foreground">
                   {row.builtAt ? <RelativeTime at={row.builtAt} /> : "—"}
+                </td>
+                <td className="px-4 py-2 text-right text-muted-foreground">
+                  {row.lastUsedAt ? <RelativeTime at={row.lastUsedAt} /> : "—"}
                 </td>
                 <td className="tabular px-4 py-2 text-right">{row.sandboxes}</td>
               </tr>

@@ -30,5 +30,14 @@ expression: events
       "snapshot": "blake3:0202020202020202020202020202020202020202020202020202020202020202",
       "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
+  },
+  {
+    "type": "warm_snapshot_used",
+    "key": "blake3:0101010101010101010101010101010101010101010101010101010101010101",
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "warm_snapshot_forgotten",
+    "key": "blake3:0101010101010101010101010101010101010101010101010101010101010101"
   }
 ]
