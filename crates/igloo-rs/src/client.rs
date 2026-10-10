@@ -10,6 +10,7 @@ use igloo_api::sandbox::{CreateSandboxRequest, SandboxList, SandboxResource};
 use igloo_api::seal::{SealPhase, SealResource};
 use igloo_api::snapshot::{CreateSnapshotRequest, ImportImageRequest, SnapshotResource};
 use igloo_api::task::{CreateTaskRequest, TaskResource, TranscriptResource};
+use igloo_api::terminal::TerminalMode;
 use igloo_api::workspace::{CreateWorkspaceRequest, WorkspaceResource};
 use reqwest::{Method, RequestBuilder, Url};
 use serde::de::DeserializeOwned;
@@ -316,6 +317,19 @@ impl Client {
             .await
     }
 
+    /// Takes a task over as the person the token stands for: their terminal in the task's
+    /// sandbox becomes writable and no turn starts until they hand the task back.
+    pub async fn take_over_task(&self, id: &str) -> Result<TaskResource, Error> {
+        self.send(self.request(Method::POST, &format!("v1/tasks/{id}/take-over"))?)
+            .await
+    }
+
+    /// Hands a taken-over task back; its next turn is asked about what the person changed.
+    pub async fn hand_back_task(&self, id: &str) -> Result<TaskResource, Error> {
+        self.send(self.request(Method::POST, &format!("v1/tasks/{id}/hand-back"))?)
+            .await
+    }
+
     /// Opens a workspace on a branch of a repository; it starts at once.
     pub async fn create_workspace(
         &self,
@@ -367,7 +381,30 @@ impl Client {
         rows: u16,
     ) -> Result<Terminal, Error> {
         let url = self.url(&format!("v1/sandboxes/{sandbox}/terminal"))?;
-        Terminal::connect(url, &self.token, command, cols, rows).await
+        Terminal::connect(
+            url,
+            &self.token,
+            command,
+            TerminalMode::ReadWrite,
+            cols,
+            rows,
+        )
+        .await
+    }
+
+    /// Attaches to a running sandbox in `mode`, with a screen of `cols` by `rows` characters. A
+    /// read-only attach shows the server's view of the sandbox and drops everything sent; it
+    /// runs no command. A read-write attach opens the default shell; in the sandbox of a task it
+    /// needs the task to be taken over by the caller.
+    pub async fn attach_terminal(
+        &self,
+        sandbox: &str,
+        mode: TerminalMode,
+        cols: u16,
+        rows: u16,
+    ) -> Result<Terminal, Error> {
+        let url = self.url(&format!("v1/sandboxes/{sandbox}/terminal"))?;
+        Terminal::connect(url, &self.token, &[], mode, cols, rows).await
     }
 
     /// Sets the dotfiles new workspaces of a repository are set up with.

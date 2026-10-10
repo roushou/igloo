@@ -3,6 +3,7 @@
 mod agent;
 mod bundle;
 mod commands;
+mod handback;
 mod harness;
 mod reactors;
 mod settings;
@@ -17,17 +18,21 @@ use igloo_core::repo::Repo;
 
 use self::agent::Agent;
 pub use self::bundle::{CommitBundle, InvalidBundle};
-use self::commands::CreateTaskHandler;
 pub use self::commands::{
-    CancelTask, CreateTask, FailTask, FinishTask, RecordCommitsCollecting, RecordTaskBuilding,
-    RecordTaskBuilt, RecordTaskPrepared, RecordTaskReady, RecordTaskRevised, RecordTaskSandbox,
-    RecordTaskSandboxStopped, RecordTurnEnded, RecordTurnStarted, RequestTurn, TaskQueries,
+    CancelTask, CreateTask, FailTask, FinishTask, HandBackTask, RecordChangesReading,
+    RecordCommitsCollecting, RecordHandedBack, RecordTaskBuilding, RecordTaskBuilt,
+    RecordTaskPrepared, RecordTaskReady, RecordTaskRevised, RecordTaskSandbox,
+    RecordTaskSandboxStopped, RecordTurnEnded, RecordTurnStarted, RequestTurn, TakeOverTask,
+    TaskQueries,
 };
+use self::commands::{CreateTaskHandler, TakeoverHandler};
+pub use self::handback::{InvalidChanges, PersonChanges};
 pub use self::harness::{ClaudeCode, Codex, CommandHarness, Harness, TurnCommand};
 use self::reactors::{AttributeOutcomes, FollowReviews, RecordTaskBuilds, RecordTurns};
 pub use self::settings::{AgentSettings, HarnessKind, InvalidToolName, ToolName, ToolSpec};
 pub use self::task::{
-    Prepared, Task, TaskAction, TaskEnd, TaskError, TaskEvent, TaskId, TaskPhase, Turn,
+    Prepared, TakeoverPhase, Task, TaskAction, TaskEnd, TaskError, TaskEvent, TaskId, TaskPhase,
+    Turn,
 };
 pub use self::transcript::{Entry, TranscriptEntry, Transcripts};
 use crate::app::{ControllerSettings, EntityHandler, Extension, InstallError, PlatformBuilder};
@@ -48,6 +53,7 @@ impl Extension for AgentsModule {
 
     fn install(self: Box<Self>, platform: &mut PlatformBuilder) -> Result<(), InstallError> {
         let store = platform.store::<Task>()?;
+        let tasks = TaskQueries::new(Arc::clone(&store));
         Self::commands(platform, &store)?;
         Self::turn_commands(platform, &store)?;
         let ports = platform.ports().clone();
@@ -64,9 +70,9 @@ impl Extension for AgentsModule {
                 Arc::clone(&ports.forge),
             ),
             changes: ChangeQueries::new(platform.store::<Change>()?),
+            tasks: tasks.clone(),
         };
         platform.controller(agent, self.settings)?;
-        let tasks = TaskQueries::new(store);
         platform.reactor(RecordTurns {
             tasks: tasks.clone(),
             logs: Arc::clone(&ports.logs),
@@ -214,6 +220,28 @@ impl AgentsModule {
             Arc::clone(clock),
             |command: &RecordTaskSandboxStopped| command.task,
             |task: &mut Task, _: &RecordTaskSandboxStopped, _| task.sandbox_stopped(),
+        ))?;
+        let takeover = TakeoverHandler {
+            store: Arc::clone(store),
+            clock: Arc::clone(clock),
+        };
+        platform.command::<TakeOverTask>(takeover.clone())?;
+        platform.command::<HandBackTask>(takeover)?;
+        platform.command(EntityHandler::new(
+            Arc::clone(store),
+            Arc::clone(clock),
+            |command: &RecordChangesReading| command.task,
+            |task: &mut Task, command: &RecordChangesReading, _| -> Result<(), TaskError> {
+                task.changes_reading(command.job)
+            },
+        ))?;
+        platform.command(EntityHandler::new(
+            Arc::clone(store),
+            Arc::clone(clock),
+            |command: &RecordHandedBack| command.task,
+            |task: &mut Task, command: &RecordHandedBack, _| -> Result<(), TaskError> {
+                task.handed_back(command.prompt.clone())
+            },
         ))?;
         Ok(())
     }

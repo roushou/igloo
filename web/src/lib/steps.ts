@@ -1,8 +1,16 @@
 import type { Check, Run, Task } from "@/api/client";
 
 /** What a running task is doing now. */
-export function taskStep(task: Pick<Task, "phase" | "turns">): string {
+export function taskStep(task: Pick<Task, "phase" | "turns" | "takeover">): string {
   if (task.phase === "preparing") return "Preparing the sandbox";
+  switch (task.takeover?.phase) {
+    case "waiting":
+      return "Taken over, the current turn is finishing";
+    case "paused":
+      return "Taken over, paused";
+    case "handing_back":
+      return "Being handed back";
+  }
   const turn = task.turns.at(-1);
   return turn ? `Working, turn ${turn.number}` : "Working";
 }

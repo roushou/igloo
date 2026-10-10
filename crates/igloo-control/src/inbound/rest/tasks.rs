@@ -5,15 +5,19 @@ use axum::http::StatusCode;
 use igloo_api::list::{ListOrder, PhaseFilter};
 use igloo_api::problem::Problem;
 use igloo_api::task::{
-    CreateTaskRequest, TaskPhase as ApiPhase, TaskResource, TranscriptEntry as ApiEntry,
-    TranscriptItem, TranscriptResource, TurnResource, TurnStatus,
+    CreateTaskRequest, TakeoverPhase as ApiTakeover, TakeoverResource, TaskPhase as ApiPhase,
+    TaskResource, TranscriptEntry as ApiEntry, TranscriptItem, TranscriptResource, TurnResource,
+    TurnStatus,
 };
 use igloo_core::repo::RepoId;
 use igloo_core::{Entity, ValidationErrors};
 
 use super::auth::Caller;
 use super::{ApiError, ApiState};
-use crate::agents::{CancelTask, CreateTask, Entry, Task, TaskEnd, TaskId, TaskPhase, ToolName};
+use crate::agents::{
+    CancelTask, CreateTask, Entry, HandBackTask, TakeOverTask, TakeoverPhase, Task, TaskEnd,
+    TaskId, TaskPhase, ToolName,
+};
 use crate::app::{AppError, RequestContext};
 
 /// Creates a task: the agent starts from the head of the repository's default branch.
@@ -150,6 +154,77 @@ pub(crate) async fn cancel_task(
     load(state, task).await
 }
 
+/// Takes a task over for the caller, who must be a person: the caller's terminal in the task's
+/// sandbox (`GET /v1/sandboxes/{id}/terminal?mode=read_write`) becomes writable and no turn
+/// starts until they hand the task back. A running turn is not interrupted. The sandbox keeps
+/// running until the task ends. Taking over a task the caller already holds changes nothing.
+#[utoipa::path(
+    post,
+    operation_id = "takeOverTask",
+    path = "/v1/tasks/{id}/take-over",
+    tag = "tasks",
+    params(("id" = String, Path)),
+    responses(
+        (status = 200, body = TaskResource),
+        (status = 404, body = Problem),
+        (status = 409, body = Problem),
+    )
+)]
+pub(super) async fn take_over(
+    State(state): State<ApiState>,
+    Caller(context): Caller,
+    Path(id): Path<String>,
+) -> Result<Json<TaskResource>, ApiError> {
+    Ok(Json(take_over_task(&state, context, &id).await?))
+}
+
+/// Takes task `id` over as the sender of `context`.
+pub(crate) async fn take_over_task(
+    state: &ApiState,
+    context: RequestContext,
+    id: &str,
+) -> Result<TaskResource, ApiError> {
+    let task = parse(id)?;
+    state.bus.dispatch(TakeOverTask { task }, context).await?;
+    load(state, task).await
+}
+
+/// Hands a task back, as the person who took it over, once its last turn ended and its commits
+/// became a revision (until then the request is refused with `task.turn_running`). The sandbox
+/// is read for what the person changed, without touching it, and the task's next turn is asked
+/// about the commits they added and the changes they left uncommitted. Uncommitted work stays in
+/// place. Handing back a task already being handed back changes nothing.
+#[utoipa::path(
+    post,
+    operation_id = "handBackTask",
+    path = "/v1/tasks/{id}/hand-back",
+    tag = "tasks",
+    params(("id" = String, Path)),
+    responses(
+        (status = 200, body = TaskResource),
+        (status = 404, body = Problem),
+        (status = 409, body = Problem),
+    )
+)]
+pub(super) async fn hand_back(
+    State(state): State<ApiState>,
+    Caller(context): Caller,
+    Path(id): Path<String>,
+) -> Result<Json<TaskResource>, ApiError> {
+    Ok(Json(hand_back_task(&state, context, &id).await?))
+}
+
+/// Hands task `id` back as the sender of `context`.
+pub(crate) async fn hand_back_task(
+    state: &ApiState,
+    context: RequestContext,
+    id: &str,
+) -> Result<TaskResource, ApiError> {
+    let task = parse(id)?;
+    state.bus.dispatch(HandBackTask { task }, context).await?;
+    load(state, task).await
+}
+
 /// Where a transcript is read from.
 #[derive(serde::Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -283,6 +358,14 @@ fn resource(task: &Task) -> TaskResource {
     }
     if let Some(change) = task.change() {
         resource = resource.with_change(change.to_string());
+    }
+    if let (Some(by), Some(phase)) = (task.taken_over_by(), task.takeover()) {
+        let phase = match phase {
+            TakeoverPhase::Waiting => ApiTakeover::Waiting,
+            TakeoverPhase::Paused => ApiTakeover::Paused,
+            TakeoverPhase::HandingBack => ApiTakeover::HandingBack,
+        };
+        resource = resource.with_takeover(TakeoverResource::new(by.to_string(), phase));
     }
     if let Some(TaskEnd::Failed { reason }) = task.end() {
         resource = resource.with_error(reason.clone());

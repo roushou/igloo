@@ -68,7 +68,9 @@ async fn an_editor_agent_creates_a_task_and_reads_its_change_over_mcp() {
             "task.cancel",
             "task.create",
             "task.get",
+            "task.hand_back",
             "task.list",
+            "task.take_over",
             "task.transcript",
         ],
         "no tool approves or merges"

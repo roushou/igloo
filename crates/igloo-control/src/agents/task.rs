@@ -5,7 +5,8 @@ use igloo_core::repo::{CommitId, RepoId};
 use igloo_core::sandbox::SandboxId;
 use igloo_core::snapshot::SnapshotId;
 use igloo_core::{
-    Entity, ErrorCode, Event, Generation, Id, Labels, Plan, Prefixed, Resource, Timestamp,
+    Actor, Entity, ErrorCode, Event, Generation, Id, Labels, Plan, Prefixed, Resource, Timestamp,
+    UserId,
 };
 use jiff::SignedDuration;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,9 @@ pub type TaskId = Id<Task>;
 /// sandbox; the first turn gets the goal, later ones a reviewer's request.
 ///
 /// Invariant: a task ends once, done, failed or cancelled; at most one turn runs at a time and
-/// at most the tool's `max_turns` run; the sandbox is stopped once the task ends.
+/// at most the tool's `max_turns` run; the sandbox is stopped once the task ends. While a
+/// person has taken the task over no turn starts, and the sandbox stays running until the task
+/// ends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
     id: TaskId,
@@ -36,10 +39,43 @@ pub struct Task {
     limited: u32,
     retry_at: Option<Timestamp>,
     requested: Option<String>,
+    takeover: Option<Takeover>,
     change: Option<ChangeId>,
     end: Option<TaskEnd>,
     created_at: Timestamp,
     events: Vec<TaskEvent>,
+}
+
+/// A person's hold on a task's sandbox, and how far handing it back is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Takeover {
+    by: UserId,
+    step: Handback,
+}
+
+/// How far handing a taken-over task back is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Handback {
+    /// The person holds the sandbox.
+    Held,
+    /// The person handed the task back; the sandbox is to be read.
+    Requested,
+    /// This job reads what the person changed.
+    Reading(JobId),
+    /// The reading job ended; the prompt is to be recorded.
+    Read { job: JobId, ending: JobEnding },
+}
+
+/// Where a takeover is, as reported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TakeoverPhase {
+    /// A turn or the collection of its commits is still in flight; it is not interrupted and
+    /// no further turn starts.
+    Waiting,
+    /// No turn runs; the person holds the sandbox and may hand the task back.
+    Paused,
+    /// The person handed the task back; the sandbox is read for what they changed.
+    HandingBack,
 }
 
 /// What preparing a task settled, from the repository's default branch.
@@ -135,6 +171,16 @@ pub enum TaskAction {
     Publish(JobId),
     /// Stop the sandbox.
     StopSandbox(SandboxId),
+    /// Start the job reading what the person who took the task over changed in the sandbox.
+    ReadChanges,
+    /// Ask the tool to continue, naming what the person changed as `job` read it; `read` is
+    /// whether the job succeeded.
+    HandBack {
+        /// The reading job.
+        job: JobId,
+        /// Whether it succeeded.
+        read: bool,
+    },
 }
 
 /// Facts about a task.
@@ -236,6 +282,31 @@ pub enum TaskEvent {
         /// When the prompt is asked again.
         retry_at: Timestamp,
     },
+    /// A person took the task over: its terminal is writable for them and no turn starts.
+    TakenOver {
+        /// The person.
+        by: UserId,
+    },
+    /// The person handed the task back; what they changed is to be read in the sandbox.
+    HandBackRequested,
+    /// This job reads what the person changed.
+    ChangesReading {
+        /// The reading job.
+        job: JobId,
+    },
+    /// The reading job ended.
+    ChangesRead {
+        /// The reading job.
+        job: JobId,
+        /// How.
+        ending: JobEnding,
+    },
+    /// The task was handed back: the next turn is asked `prompt`, which names what the person
+    /// changed.
+    HandedBack {
+        /// What the tool is asked.
+        prompt: String,
+    },
 }
 
 /// Why a task change is rejected.
@@ -247,6 +318,25 @@ pub enum TaskError {
     /// The goal is empty.
     #[error("the goal is empty")]
     EmptyGoal,
+    /// Only a person takes a task over or hands it back.
+    #[error("only a person can take a task over or hand it back")]
+    NotAPerson,
+    /// Another person holds the task.
+    #[error("the task is taken over by someone else")]
+    AlreadyTakenOver,
+    /// Nobody has taken the task over.
+    #[error("the task is not taken over")]
+    NotTakenOver,
+    /// Only the person who took the task over hands it back or types in its terminal.
+    #[error("the task was taken over by someone else")]
+    NotYourTakeover,
+    /// The person handed the task back; its sandbox is no longer theirs to type in.
+    #[error("the task is being handed back")]
+    HandingBack,
+    /// A turn is still in flight; the task can be handed back once it ended and its commits
+    /// became a revision.
+    #[error("a turn is still running")]
+    TurnRunning,
 }
 
 impl ErrorCode for TaskError {
@@ -254,6 +344,12 @@ impl ErrorCode for TaskError {
         match self {
             Self::OutOfOrder => "task.out_of_order",
             Self::EmptyGoal => "task.empty_goal",
+            Self::NotAPerson => "task.not_a_person",
+            Self::AlreadyTakenOver => "task.already_taken_over",
+            Self::NotTakenOver => "task.not_taken_over",
+            Self::NotYourTakeover => "task.not_your_takeover",
+            Self::HandingBack => "task.handing_back",
+            Self::TurnRunning => "task.turn_running",
         }
     }
 }
@@ -367,6 +463,123 @@ impl Task {
         }
     }
 
+    /// Takes the task over for the person `by`: their terminal in the sandbox becomes writable
+    /// and no turn starts until they hand the task back. A running turn is not interrupted.
+    /// Taking over a task the person already holds records nothing.
+    pub fn take_over(&mut self, by: Actor) -> Result<(), TaskError> {
+        let Actor::Human { user } = by else {
+            return Err(TaskError::NotAPerson);
+        };
+        if self.end.is_some() || self.sandbox.is_none() || self.stopped {
+            return Err(TaskError::OutOfOrder);
+        }
+        match self.takeover {
+            Some(Takeover { by, .. }) if by == user => Ok(()),
+            Some(_) => Err(TaskError::AlreadyTakenOver),
+            None => {
+                self.record(TaskEvent::TakenOver { by: user });
+                Ok(())
+            }
+        }
+    }
+
+    /// Hands the task back for the person who took it over, once no turn is in flight: the
+    /// sandbox is read for what they changed, then the next turn is asked about it. Handing
+    /// back a task that is being handed back records nothing.
+    pub fn hand_back(&mut self, by: Actor) -> Result<(), TaskError> {
+        let Actor::Human { user } = by else {
+            return Err(TaskError::NotAPerson);
+        };
+        let Some(Takeover { by: holder, step }) = self.takeover else {
+            return Err(TaskError::NotTakenOver);
+        };
+        if holder != user {
+            return Err(TaskError::NotYourTakeover);
+        }
+        if step != Handback::Held {
+            return Ok(());
+        }
+        if !self.quiet() {
+            return Err(TaskError::TurnRunning);
+        }
+        self.record(TaskEvent::HandBackRequested);
+        Ok(())
+    }
+
+    /// Whether `by` may type in the task's sandbox: they took the task over and have not
+    /// handed it back.
+    pub fn writable_by(&self, by: Actor) -> Result<(), TaskError> {
+        let Actor::Human { user } = by else {
+            return Err(TaskError::NotAPerson);
+        };
+        match self.takeover {
+            None => Err(TaskError::NotTakenOver),
+            Some(Takeover { by, .. }) if by != user => Err(TaskError::NotYourTakeover),
+            Some(Takeover {
+                step: Handback::Held,
+                ..
+            }) => Ok(()),
+            Some(_) => Err(TaskError::HandingBack),
+        }
+    }
+
+    /// Records the job reading what the person changed.
+    pub fn changes_reading(&mut self, job: JobId) -> Result<(), TaskError> {
+        if self.end.is_some() || self.step() != Some(Handback::Requested) {
+            return Err(TaskError::OutOfOrder);
+        }
+        self.record(TaskEvent::ChangesReading { job });
+        Ok(())
+    }
+
+    /// Hands the task back with `prompt`, which names what the person changed: nobody holds the
+    /// task any more and its next turn is asked `prompt`, then whatever was requested meanwhile.
+    /// A task that already took its tool's `max_turns` fails instead.
+    pub fn handed_back(&mut self, prompt: String) -> Result<(), TaskError> {
+        if self.end.is_some() || !matches!(self.step(), Some(Handback::Read { .. })) {
+            return Err(TaskError::OutOfOrder);
+        }
+        let max = self
+            .prepared
+            .as_ref()
+            .map_or(u32::MAX, |prepared| prepared.spec.max_turns);
+        let turns = u32::try_from(self.turns.len()).unwrap_or(u32::MAX);
+        let over = self.requested.is_none() && turns >= max;
+        self.record(TaskEvent::HandedBack { prompt });
+        if over {
+            self.end_with(TaskEnd::Failed {
+                reason: format!("the task took its {max} turns"),
+            });
+        }
+        Ok(())
+    }
+
+    /// The person who took the task over, until it is handed back.
+    #[must_use]
+    pub fn taken_over_by(&self) -> Option<UserId> {
+        self.takeover.map(|takeover| takeover.by)
+    }
+
+    /// Where the takeover is, if the task is taken over.
+    #[must_use]
+    pub fn takeover(&self) -> Option<TakeoverPhase> {
+        let takeover = self.takeover?;
+        Some(match takeover.step {
+            Handback::Held if self.quiet() => TakeoverPhase::Paused,
+            Handback::Held => TakeoverPhase::Waiting,
+            _ => TakeoverPhase::HandingBack,
+        })
+    }
+
+    /// The job reading what the person changed, once started.
+    #[must_use]
+    pub fn changes_job(&self) -> Option<JobId> {
+        match self.step()? {
+            Handback::Reading(job) | Handback::Read { job, .. } => Some(job),
+            Handback::Held | Handback::Requested => None,
+        }
+    }
+
     /// The prompt of the turn answering `request`.
     #[must_use]
     pub fn review_prompt(request: &ChangeRequest) -> String {
@@ -407,11 +620,15 @@ impl Task {
         Ok(())
     }
 
-    /// Records how a job ended; only the last turn's job and its collecting job count, once
-    /// each. A failed turn fails the task. A failed collection is retried; once
+    /// Records how a job ended; only the last turn's job, its collecting job and the job
+    /// reading a handed-back sandbox count, once each. A failed turn fails the task. A failed collection is retried; once
     /// [`Task::COLLECT_ATTEMPTS`] have failed, the task fails and keeps its sandbox, so the
     /// turn's commits stay recoverable, until it is cancelled.
     pub fn job_ended(&mut self, job: JobId, ending: JobEnding) {
+        if self.end.is_none() && self.step() == Some(Handback::Reading(job)) {
+            self.record(TaskEvent::ChangesRead { job, ending });
+            return;
+        }
         let Some(turn) = self.turns.last() else {
             return;
         };
@@ -604,7 +821,7 @@ impl Task {
             TaskPhase::Ended
         } else if self.sandbox.is_none() {
             TaskPhase::Preparing
-        } else if self.next_prompt().is_none()
+        } else if self.due_prompt().is_none()
             && self
                 .turns
                 .last()
@@ -616,8 +833,16 @@ impl Task {
         }
     }
 
-    /// The prompt of the turn to start next, if one is due: the goal first, then requests.
+    /// The prompt of the turn to start next, if one is due and nobody holds the task.
     fn next_prompt(&self) -> Option<String> {
+        if self.takeover.is_some() {
+            return None;
+        }
+        self.due_prompt()
+    }
+
+    /// The prompt of the next turn, whoever holds the task: the goal first, then requests.
+    fn due_prompt(&self) -> Option<String> {
         if self.sandbox.is_none() || self.end.is_some() {
             return None;
         }
@@ -629,6 +854,21 @@ impl Task {
             .last()
             .is_some_and(|turn| turn.revision.is_some());
         self.requested.clone().filter(|_| last_revised)
+    }
+
+    fn step(&self) -> Option<Handback> {
+        self.takeover.map(|takeover| takeover.step)
+    }
+
+    /// Whether no turn is in flight: the last turn, if any, became a revision.
+    fn quiet(&self) -> bool {
+        self.turns.last().is_none_or(|turn| turn.revision.is_some())
+    }
+
+    fn set_step(&mut self, step: Handback) {
+        if let Some(takeover) = &mut self.takeover {
+            takeover.step = step;
+        }
     }
 
     fn deciding(&self) -> Result<(), TaskError> {
@@ -663,6 +903,7 @@ impl Task {
             limited: 0,
             retry_at: None,
             requested: None,
+            takeover: None,
             change: None,
             end: None,
             created_at: at,
@@ -701,6 +942,11 @@ impl Event for TaskEvent {
             Self::SandboxStopped => "igloo.task.sandbox_stopped",
             Self::SandboxReleased => "igloo.task.sandbox_released",
             Self::TurnLimited { .. } => "igloo.task.turn_limited",
+            Self::TakenOver { .. } => "igloo.task.taken_over",
+            Self::HandBackRequested => "igloo.task.hand_back_requested",
+            Self::ChangesReading { .. } => "igloo.task.changes_reading",
+            Self::ChangesRead { .. } => "igloo.task.changes_read",
+            Self::HandedBack { .. } => "igloo.task.handed_back",
         }
     }
 }
@@ -799,6 +1045,25 @@ impl Entity for Task {
                 self.limited += 1;
                 self.retry_at = Some(*retry_at);
             }
+            TaskEvent::TakenOver { by } => {
+                self.takeover = Some(Takeover {
+                    by: *by,
+                    step: Handback::Held,
+                });
+            }
+            TaskEvent::HandBackRequested => self.set_step(Handback::Requested),
+            TaskEvent::ChangesReading { job } => self.set_step(Handback::Reading(*job)),
+            TaskEvent::ChangesRead { job, ending } => self.set_step(Handback::Read {
+                job: *job,
+                ending: *ending,
+            }),
+            TaskEvent::HandedBack { prompt } => {
+                self.takeover = None;
+                self.requested = Some(match self.requested.take() {
+                    Some(pending) => format!("{prompt}\n\n{pending}"),
+                    None => prompt.clone(),
+                });
+            }
         }
     }
 
@@ -833,7 +1098,9 @@ impl Resource for Task {
     }
 
     /// One step at a time; steps waiting on a build or a turn resume when its outcome is
-    /// recorded. An ended task stops its sandbox, unless it keeps it for recovery.
+    /// recorded. A taken-over task starts no turn but still collects and publishes the commits
+    /// of the turn that ended. An ended task stops its sandbox, unless it keeps it for
+    /// recovery.
     fn plan(&self, now: Timestamp) -> Plan<TaskAction> {
         if self.keeps_sandbox() {
             return Plan::Converged;
@@ -849,6 +1116,17 @@ impl Resource for Task {
             (Setup::Building(_), _) => Plan::Converged,
             (Setup::Ready(snapshot), None) => Plan::Act(vec![TaskAction::StartSandbox(snapshot)]),
             (Setup::Ready(_), Some(_)) => {
+                match self.step() {
+                    Some(Handback::Requested) => return Plan::Act(vec![TaskAction::ReadChanges]),
+                    Some(Handback::Reading(_)) => return Plan::Converged,
+                    Some(Handback::Read { job, ending }) => {
+                        return Plan::Act(vec![TaskAction::HandBack {
+                            job,
+                            read: ending.succeeded(),
+                        }]);
+                    }
+                    Some(Handback::Held) | None => {}
+                }
                 if let Some(prompt) = self.next_prompt() {
                     if let Some(retry_at) = self.retry_at
                         && retry_at > now
@@ -1452,8 +1730,303 @@ mod tests {
             .then_error("task.out_of_order");
     }
 
+    fn person(n: u128) -> Actor {
+        Actor::Human { user: id(n) }
+    }
+
+    fn agent_actor() -> Actor {
+        Actor::Agent {
+            agent: id(5),
+            principal: id(7),
+        }
+    }
+
+    /// `events` followed by person 7 taking the task over.
+    fn taken_over(mut events: Vec<TaskEvent>) -> Vec<TaskEvent> {
+        events.push(TaskEvent::TakenOver { by: id(7) });
+        events
+    }
+
+    /// A taken-over task whose person handed it back and whose sandbox was read.
+    fn read(max_turns: u32) -> Vec<TaskEvent> {
+        let mut events = taken_over(revised(max_turns));
+        events.extend([
+            TaskEvent::HandBackRequested,
+            TaskEvent::ChangesReading { job: id(60) },
+            TaskEvent::ChangesRead {
+                job: id(60),
+                ending: exited(0),
+            },
+        ]);
+        events
+    }
+
+    #[test]
+    fn only_a_person_takes_a_task_over_and_only_once() {
+        S::given(working(10))
+            .try_when(|task, _| task.take_over(agent_actor()))
+            .then_error("task.not_a_person");
+        S::given(working(10))
+            .try_when(|task, _| {
+                task.take_over(Actor::System {
+                    component: igloo_core::SystemComponent::Controller,
+                })
+            })
+            .then_error("task.not_a_person");
+        let held = S::given(working(10))
+            .try_when(|task, _| task.take_over(person(7)))
+            .then([TaskEvent::TakenOver { by: id(7) }]);
+        assert_eq!(held.state().taken_over_by(), Some(id(7)));
+        S::given(taken_over(working(10)))
+            .try_when(|task, _| task.take_over(person(7)))
+            .then_no_events();
+        S::given(taken_over(working(10)))
+            .try_when(|task, _| task.take_over(person(8)))
+            .then_error("task.already_taken_over");
+        S::given([created()])
+            .try_when(|task, _| task.take_over(person(7)))
+            .then_error("task.out_of_order");
+    }
+
+    #[test]
+    fn a_running_turn_is_not_interrupted_but_no_turn_starts_while_taken_over() {
+        let held = S::given(taken_over(working(10)));
+        assert_eq!(held.state().takeover(), Some(TakeoverPhase::Waiting));
+        held.plan().then_converged();
+        let ended = held
+            .when(|task, _| task.job_ended(id(20), exited(0)))
+            .then([TaskEvent::TurnEnded {
+                job: id(20),
+                ending: exited(0),
+            }]);
+        ended.plan().then_actions([TaskAction::CollectCommits]);
+
+        let mut events = taken_over(revised(10));
+        events.push(TaskEvent::TurnRequested {
+            prompt: "Add a test".to_owned(),
+        });
+        let paused = S::given(events);
+        assert_eq!(paused.state().takeover(), Some(TakeoverPhase::Paused));
+        assert_eq!(paused.state().phase(), TaskPhase::Working);
+        paused.plan().then_converged();
+        paused
+            .try_when(|task, _| task.turn_started(id(21), "Add a test".to_owned()))
+            .then_error("task.out_of_order");
+    }
+
+    #[test]
+    fn a_task_taken_over_before_its_first_turn_starts_none() {
+        let mut events = working(10);
+        events.pop();
+        let held = S::given(taken_over(events));
+        held.plan().then_converged();
+        assert_eq!(held.state().takeover(), Some(TakeoverPhase::Paused));
+    }
+
+    #[test]
+    fn handing_back_needs_the_holder_and_a_turn_that_ended() {
+        S::given(taken_over(working(10)))
+            .try_when(|task, _| task.hand_back(person(7)))
+            .then_error("task.turn_running");
+        S::given(taken_over(revised(10)))
+            .try_when(|task, _| task.hand_back(person(8)))
+            .then_error("task.not_your_takeover");
+        S::given(taken_over(revised(10)))
+            .try_when(|task, _| task.hand_back(agent_actor()))
+            .then_error("task.not_a_person");
+        S::given(revised(10))
+            .try_when(|task, _| task.hand_back(person(7)))
+            .then_error("task.not_taken_over");
+    }
+
+    #[test]
+    fn handing_back_reads_the_sandbox_then_asks_for_a_turn() {
+        let requested = S::given(taken_over(revised(10)))
+            .try_when(|task, _| task.hand_back(person(7)))
+            .then([TaskEvent::HandBackRequested]);
+        assert_eq!(
+            requested.state().takeover(),
+            Some(TakeoverPhase::HandingBack)
+        );
+        requested.plan().then_actions([TaskAction::ReadChanges]);
+        let reading = requested
+            .try_when(|task, _| task.changes_reading(id(60)))
+            .then([TaskEvent::ChangesReading { job: id(60) }]);
+        assert_eq!(reading.state().changes_job(), Some(id(60)));
+        reading.plan().then_converged();
+
+        let read = reading
+            .when(|task, _| task.job_ended(id(60), exited(0)))
+            .then([TaskEvent::ChangesRead {
+                job: id(60),
+                ending: exited(0),
+            }]);
+        read.plan().then_actions([TaskAction::HandBack {
+            job: id(60),
+            read: true,
+        }]);
+        let back = read
+            .try_when(|task, _| task.handed_back("They fixed the typo.".to_owned()))
+            .then([TaskEvent::HandedBack {
+                prompt: "They fixed the typo.".to_owned(),
+            }]);
+        assert_eq!(back.state().taken_over_by(), None);
+        assert_eq!(back.state().takeover(), None);
+        assert_eq!(back.state().phase(), TaskPhase::Working);
+        back.plan()
+            .then_actions([TaskAction::StartTurn("They fixed the typo.".to_owned())]);
+    }
+
+    #[test]
+    fn each_step_of_handing_back_happens_once_and_in_order() {
+        let handing = || {
+            let mut events = taken_over(revised(10));
+            events.push(TaskEvent::HandBackRequested);
+            events
+        };
+        S::given(handing())
+            .try_when(|task, _| task.hand_back(person(7)))
+            .then_no_events();
+        S::given(handing())
+            .try_when(|task, _| task.handed_back("early".to_owned()))
+            .then_error("task.out_of_order");
+        let mut reading = handing();
+        reading.push(TaskEvent::ChangesReading { job: id(60) });
+        S::given(reading.clone())
+            .try_when(|task, _| task.changes_reading(id(61)))
+            .then_error("task.out_of_order");
+        S::given(reading)
+            .when(|task, _| task.job_ended(id(99), exited(0)))
+            .then_no_events();
+        S::given(read(10))
+            .when(|task, _| task.job_ended(id(60), exited(0)))
+            .then_no_events();
+        S::given(taken_over(revised(10)))
+            .try_when(|task, _| task.changes_reading(id(60)))
+            .then_error("task.out_of_order");
+    }
+
+    #[test]
+    fn a_failed_reading_still_hands_the_task_back() {
+        let mut events = taken_over(revised(10));
+        events.extend([
+            TaskEvent::HandBackRequested,
+            TaskEvent::ChangesReading { job: id(60) },
+        ]);
+        S::given(events)
+            .when(|task, _| task.job_ended(id(60), exited(1)))
+            .then([TaskEvent::ChangesRead {
+                job: id(60),
+                ending: exited(1),
+            }])
+            .plan()
+            .then_actions([TaskAction::HandBack {
+                job: id(60),
+                read: false,
+            }]);
+    }
+
+    #[test]
+    fn a_request_made_while_taken_over_follows_the_handed_back_prompt() {
+        let mut events = read(10);
+        events.insert(
+            events.len() - 3,
+            TaskEvent::TurnRequested {
+                prompt: "Add a test".to_owned(),
+            },
+        );
+        S::given(events)
+            .try_when(|task, _| task.handed_back("They edited.".to_owned()))
+            .then([TaskEvent::HandedBack {
+                prompt: "They edited.".to_owned(),
+            }])
+            .plan()
+            .then_actions([TaskAction::StartTurn(
+                "They edited.\n\nAdd a test".to_owned(),
+            )]);
+    }
+
+    #[test]
+    fn a_task_over_its_max_turns_fails_when_handed_back() {
+        let failed = S::given(read(1))
+            .try_when(|task, _| task.handed_back("They edited.".to_owned()))
+            .then([
+                TaskEvent::HandedBack {
+                    prompt: "They edited.".to_owned(),
+                },
+                TaskEvent::Ended {
+                    end: TaskEnd::Failed {
+                        reason: "the task took its 1 turns".to_owned(),
+                    },
+                },
+            ]);
+        failed
+            .plan()
+            .then_actions([TaskAction::StopSandbox(id(10))]);
+    }
+
+    #[test]
+    fn only_the_holder_types_until_the_task_is_handed_back() {
+        let held = || S::given(taken_over(revised(10)));
+        held().plan().then_converged();
+        held()
+            .state()
+            .writable_by(person(7))
+            .expect("the holder types");
+        assert_eq!(
+            held().state().writable_by(person(8)),
+            Err(TaskError::NotYourTakeover)
+        );
+        assert_eq!(
+            held().state().writable_by(agent_actor()),
+            Err(TaskError::NotAPerson)
+        );
+        assert_eq!(
+            S::given(revised(10)).state().writable_by(person(7)),
+            Err(TaskError::NotTakenOver)
+        );
+        let handing = held()
+            .try_when(|task, _| task.hand_back(person(7)))
+            .then([TaskEvent::HandBackRequested]);
+        assert_eq!(
+            handing.state().writable_by(person(7)),
+            Err(TaskError::HandingBack)
+        );
+    }
+
+    #[test]
+    fn a_taken_over_task_that_ends_stops_its_sandbox() {
+        let cancelled = S::given(taken_over(revised(10)))
+            .when(|task, _| task.cancel())
+            .then([TaskEvent::Ended {
+                end: TaskEnd::Cancelled,
+            }]);
+        cancelled
+            .plan()
+            .then_actions([TaskAction::StopSandbox(id(10))]);
+        cancelled
+            .try_when(|task, _| task.take_over(person(7)))
+            .then_error("task.out_of_order");
+    }
+
     #[test]
     fn events_serialize_stably() {
         insta::assert_json_snapshot!(working(10));
+    }
+
+    #[test]
+    fn takeover_events_serialize_stably() {
+        insta::assert_json_snapshot!([
+            TaskEvent::TakenOver { by: id(7) },
+            TaskEvent::HandBackRequested,
+            TaskEvent::ChangesReading { job: id(60) },
+            TaskEvent::ChangesRead {
+                job: id(60),
+                ending: exited(0),
+            },
+            TaskEvent::HandedBack {
+                prompt: "They fixed the typo.".to_owned(),
+            },
+        ]);
     }
 }

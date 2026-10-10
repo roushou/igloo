@@ -12,10 +12,12 @@ use igloo_core::{Actor, Digest, Entity, SystemComponent, ValidationErrors};
 use jiff::SignedDuration;
 
 use super::AgentSettings;
+use super::PersonChanges;
 use super::bundle::{CommitBundle, GitIdentity};
 use super::commands::{
-    FailTask, RecordCommitsCollecting, RecordTaskBuilding, RecordTaskPrepared, RecordTaskReady,
-    RecordTaskRevised, RecordTaskSandbox, RecordTaskSandboxStopped, RecordTurnStarted,
+    FailTask, RecordChangesReading, RecordCommitsCollecting, RecordHandedBack, RecordTaskBuilding,
+    RecordTaskPrepared, RecordTaskReady, RecordTaskRevised, RecordTaskSandbox,
+    RecordTaskSandboxStopped, RecordTurnStarted, TaskQueries,
 };
 use super::task::{Prepared, Task, TaskAction};
 use crate::app::{AppError, Command, CommandBus, Reconciler, RequestContext};
@@ -38,6 +40,7 @@ pub(super) struct Agent {
     pub(super) logs: Arc<dyn LogStore>,
     pub(super) heads: ChangeHeads,
     pub(super) changes: ChangeQueries,
+    pub(super) tasks: TaskQueries,
 }
 
 /// What a step of the setup decided.
@@ -57,6 +60,8 @@ impl Reconciler<Task> for Agent {
                 TaskAction::StartTurn(prompt) => self.start_turn(task, prompt).await?,
                 TaskAction::CollectCommits => self.collect(task).await?,
                 TaskAction::Publish(job) => self.publish(task, job).await?,
+                TaskAction::ReadChanges => self.read_changes(task).await?,
+                TaskAction::HandBack { job, read } => self.hand_back(task, job, read).await?,
                 TaskAction::StopSandbox(sandbox) => {
                     self.dispatch(StopSandbox { sandbox }).await?;
                     self.dispatch(RecordTaskSandboxStopped { task: task.id() })
@@ -71,6 +76,8 @@ impl Reconciler<Task> for Agent {
 impl Agent {
     /// How long collecting a turn's commits may take, in seconds.
     const COLLECT_TIMEOUT: u32 = 600;
+    /// How long reading what a person changed may take, in seconds.
+    const READ_TIMEOUT: u32 = 120;
     const PAGE: usize = 256;
 
     /// Settles the task's settings once, then finds its snapshot or starts the next build.
@@ -258,6 +265,11 @@ impl Agent {
     }
 
     async fn start_turn(&self, task: &Task, prompt: String) -> Result<(), AppError> {
+        // A person may have taken the task over since its plan was made; no turn starts then.
+        let held = self.tasks.get(task.id()).await?;
+        if held.is_some_and(|fresh| fresh.taken_over_by().is_some()) {
+            return Ok(());
+        }
         let prepared = Self::prepared(task)?;
         let Some(sandbox) = task.sandbox() else {
             return Err(AppError::not_found("task_sandbox", &task.id()));
@@ -388,6 +400,62 @@ impl Agent {
             task: task.id(),
             change,
             revision,
+        })
+        .await
+    }
+
+    /// Submits the job reading what the person who took the task over changed in its sandbox.
+    /// The job only reads: uncommitted work stays in place.
+    async fn read_changes(&self, task: &Task) -> Result<(), AppError> {
+        let prepared = Self::prepared(task)?;
+        let Some(sandbox) = task.sandbox() else {
+            return Err(AppError::not_found("task_sandbox", &task.id()));
+        };
+        let argv = Argv::try_from(vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            PersonChanges::SCRIPT.to_owned(),
+        ])
+        .map_err(|error| {
+            AppError::Validation(ValidationErrors::single("argv", error.to_string()))
+        })?;
+        let env = BTreeMap::from([
+            (PersonChanges::BASE.to_owned(), prepared.commit.to_string()),
+            (PersonChanges::TASK.to_owned(), task.id().to_string()),
+        ]);
+        let job = self
+            .dispatch(SubmitJob {
+                spec: JobSpec::Execute {
+                    sandbox,
+                    argv,
+                    env: EnvVars::try_from(env).map_err(AppError::Validation)?,
+                    secrets: BTreeSet::new(),
+                    timeout: Self::timeout(Self::READ_TIMEOUT)?,
+                },
+            })
+            .await?;
+        self.dispatch(RecordChangesReading {
+            task: task.id(),
+            job,
+        })
+        .await
+    }
+
+    /// Hands the task back with the prompt naming what `job` read; a job that failed or whose
+    /// output is not a report hands it back with a prompt asking the tool to look.
+    async fn hand_back(&self, task: &Task, job: JobId, read: bool) -> Result<(), AppError> {
+        let changes = if read {
+            let output = self.stdout(job).await?;
+            String::from_utf8_lossy(&output)
+                .parse::<PersonChanges>()
+                .ok()
+        } else {
+            None
+        };
+        let prompt = changes.map_or_else(PersonChanges::unread_prompt, |changes| changes.prompt());
+        self.dispatch(RecordHandedBack {
+            task: task.id(),
+            prompt,
         })
         .await
     }

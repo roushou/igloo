@@ -25,9 +25,19 @@ export type ChangePhase = Schemas["ChangePhase"];
 export type TerminalClientFrame = Schemas["TerminalClientFrame"];
 export type TerminalServerFrame = Schemas["TerminalServerFrame"];
 export type TerminalEndReason = Schemas["TerminalEndReason"];
+export type TerminalMode = Schemas["TerminalMode"];
+export type Takeover = Schemas["TakeoverResource"];
 
-/** What a terminal runs and the screen it starts with. */
-export type TerminalOptions = { command?: string[]; cols: number; rows: number };
+/**
+ * What a terminal runs, the screen it starts with, and whether it may type. A read-only terminal
+ * names no command: the server runs its own view and drops everything sent.
+ */
+export type TerminalOptions = {
+  command?: string[];
+  cols: number;
+  rows: number;
+  mode?: TerminalMode;
+};
 
 /** The WebSocket subprotocol of a terminal, and the prefix of the one that carries the token. */
 export const TERMINAL_PROTOCOL = "igloo.terminal.v1";
@@ -123,6 +133,16 @@ export class ApiClient {
 
   async cancelTask(id: string): Promise<Task> {
     return unwrap(await this.http.POST("/v1/tasks/{id}/cancel", { params: { path: { id } } }));
+  }
+
+  /** Takes a task over for the signed-in person: their terminal in its sandbox becomes writable. */
+  async takeOverTask(id: string): Promise<Task> {
+    return unwrap(await this.http.POST("/v1/tasks/{id}/take-over", { params: { path: { id } } }));
+  }
+
+  /** Hands a taken-over task back; its next turn is told what the person changed. */
+  async handBackTask(id: string): Promise<Task> {
+    return unwrap(await this.http.POST("/v1/tasks/{id}/hand-back", { params: { path: { id } } }));
   }
 
   /** A task's transcript from position `after` on. */
@@ -317,6 +337,7 @@ export class ApiClient {
     for (const part of options.command ?? []) url.searchParams.append("command", part);
     url.searchParams.set("cols", String(options.cols));
     url.searchParams.set("rows", String(options.rows));
+    if (options.mode === "read_only") url.searchParams.set("mode", options.mode);
     const protocols: string[] = [TERMINAL_PROTOCOL];
     const token = this.tokens.get();
     if (token) protocols.push(`${TERMINAL_BEARER_PREFIX}${token}`);

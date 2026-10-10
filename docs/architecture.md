@@ -427,6 +427,11 @@ composition.rs  Server: the only place naming concrete adapters
   signed with the server's blob key (`inbound/workspace_credentials.rs`) naming the workspace and
   its sandbox. The git endpoint accepts it only for the workspace's repository, as the workspace's
   owner, while the workspace still runs that sandbox. The API token never enters a sandbox.
+  `?mode=read_only` watches instead: the server runs its own view of the sandbox (working tree
+  status and recent commits, without git locks), refuses a `command`, and drops every input frame.
+  In a task's sandbox the default read-write terminal is refused unless the caller is the person
+  who took the task over (`GET /v1/tasks/{id}` reports `takeover`); input stops being forwarded
+  within a second of the task being handed back.
 - **Worker protocol** `igloo.worker.v1`: the server sends the full desired `Assignment`, lease
   grants, cancels and drain; the worker sends hello, heartbeats, usage (disk, layer cache, sandboxes held; every 30 s), status, logs and results.
   Terminals ride the same stream: the server sends open, input, resize and close; the worker sends
@@ -499,6 +504,16 @@ is ahead of the copy is fetched into it. Review, checks and merge decisions live
 `igloo change checkout <id>` fetches a change locally as a branch. `igloo git-credential` is a git
 credential helper that answers with the API token for Igloo's own host only. `igloo shell` opens a
 terminal in a workspace over the sandbox terminal endpoint (`docs/workspaces.md`).
+
+**Attaching to an agent.** A person can watch a task's sandbox read-only, or take the task over
+(`POST /v1/tasks/{id}/take-over`, MCP `task.take_over`, `igloo task take-over`; only a person, never
+an agent). While a task is taken over no turn starts: a running turn finishes and its commits are
+still collected and published, the person's terminal in the sandbox is writable, and the sandbox
+stays running until the task ends (it is never sealed or reclaimed for idleness). Handing back
+(`/hand-back`, `task.hand_back`, `igloo task hand-back`) is allowed once the last turn became a
+revision: a read-only job in the sandbox lists the commits added since the task's last commit
+carrying its `Igloo-Task` trailer, their diff stat and the uncommitted changes, and the next turn's
+prompt names them. Uncommitted work stays in place and is committed by the next collection.
 
 ## 13. Agents and autonomy
 

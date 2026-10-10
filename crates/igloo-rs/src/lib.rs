@@ -28,7 +28,7 @@ mod workspaces;
 pub use archive::Layer;
 pub use client::{Client, Error};
 pub use igloo_api::run as ci;
-pub use igloo_api::terminal::TerminalEndReason;
+pub use igloo_api::terminal::{TerminalEndReason, TerminalMode};
 pub use igloo_api::{change, job, problem, repo, sandbox, seal, snapshot, task, workspace};
 pub use logs::{LogEvent, LogStream, OutputStream};
 pub use run::{Run, Running};

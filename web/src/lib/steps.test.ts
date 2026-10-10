@@ -1,4 +1,4 @@
-import { checkDuration, previousDuration } from "./steps";
+import { checkDuration, previousDuration, taskStep } from "./steps";
 
 const check = (name: string, started_at?: string, ended_at?: string) => ({
   name,
@@ -44,5 +44,20 @@ describe("previousDuration", () => {
     expect(
       previousDuration(runs, { ...current, started_at: "2026-01-05T00:00:00Z" }, "lint"),
     ).toBeNull();
+  });
+});
+
+describe("taskStep", () => {
+  const working = { phase: "working" as const, turns: [], takeover: null };
+
+  it("names the turn, and the takeover when a person holds the task", () => {
+    expect(taskStep(working)).toBe("Working");
+    const takeover = (phase: "waiting" | "paused" | "handing_back") => ({
+      ...working,
+      takeover: { by: "usr_1", phase },
+    });
+    expect(taskStep(takeover("waiting"))).toBe("Taken over, the current turn is finishing");
+    expect(taskStep(takeover("paused"))).toBe("Taken over, paused");
+    expect(taskStep(takeover("handing_back"))).toBe("Being handed back");
   });
 });

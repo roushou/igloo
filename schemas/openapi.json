@@ -1922,7 +1922,7 @@
           "sandboxes"
         ],
         "summary": "Opens an interactive terminal in a running sandbox: upgrades to a WebSocket speaking the\nsubprotocol `igloo.terminal.v1`.",
-        "description": "Binary frames carry the terminal's bytes in both directions. Text frames carry JSON control\nmessages: the client sends `TerminalClientFrame` (resize); the server sends one\n`TerminalServerFrame` (exit) and closes the socket when the process ends. Closing the socket\nkills the process. Authenticated like the rest of the API; a browser, which cannot set headers\non a WebSocket, offers the subprotocol `igloo.bearer.<token>` as well.",
+        "description": "With `mode=read_only` the caller watches: the server runs its own view of the sandbox (a\ncommand of the caller's is refused) and drops every input frame, so nothing the caller sends\nreaches the sandbox. The default `read_write` forwards input. In the sandbox of a task it is\nrefused (409) unless the caller is the person who took the task over, and it stops forwarding\ninput once the task is handed back.\n\nBinary frames carry the terminal's bytes in both directions. Text frames carry JSON control\nmessages: the client sends `TerminalClientFrame` (resize); the server sends one\n`TerminalServerFrame` (exit) and closes the socket when the process ends. Closing the socket\nkills the process. Authenticated like the rest of the API; a browser, which cannot set headers\non a WebSocket, offers the subprotocol `igloo.bearer.<token>` as well.",
         "operationId": "openTerminal",
         "parameters": [
           {
@@ -1965,6 +1965,15 @@
               "type": "integer",
               "format": "int32",
               "minimum": 0
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "`read_only` to watch, which takes no command; `read_write` (the default) to type",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TerminalMode"
             }
           }
         ],
@@ -2382,6 +2391,102 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/hand-back": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Hands a task back, as the person who took it over, once its last turn ended and its commits\nbecame a revision (until then the request is refused with `task.turn_running`). The sandbox\nis read for what the person changed, without touching it, and the task's next turn is asked\nabout the commits they added and the changes they left uncommitted. Uncommitted work stays in\nplace. Handing back a task already being handed back changes nothing.",
+        "operationId": "handBackTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/take-over": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Takes a task over for the caller, who must be a person: the caller's terminal in the task's\nsandbox (`GET /v1/sandboxes/{id}/terminal?mode=read_write`) becomes writable and no turn\nstarts until they hand the task back. A running turn is not interrupted. The sandbox keeps\nrunning until the task ends. Taking over a task the caller already holds changes nothing.",
+        "operationId": "takeOverTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4213,6 +4318,33 @@
           }
         }
       },
+      "TakeoverPhase": {
+        "type": "string",
+        "description": "Where a person's takeover of a task is.",
+        "enum": [
+          "waiting",
+          "paused",
+          "handing_back"
+        ]
+      },
+      "TakeoverResource": {
+        "type": "object",
+        "description": "A person's hold on a task's sandbox.\n\nWhile it lasts no turn of the task starts; the sandbox keeps running until the task ends.",
+        "required": [
+          "by",
+          "phase"
+        ],
+        "properties": {
+          "by": {
+            "type": "string",
+            "description": "The person (`usr_...`) who took the task over: the only one who may type in its\nsandbox's terminal and hand it back."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/TakeoverPhase",
+            "description": "Where it is."
+          }
+        }
+      },
       "TaskPhase": {
         "type": "string",
         "description": "Where a task is.",
@@ -4286,6 +4418,17 @@
             ],
             "description": "Its sandbox, once started."
           },
+          "takeover": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TakeoverResource",
+                "description": "The person holding the task, while someone does."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tool": {
             "type": [
               "string",
@@ -4344,6 +4487,14 @@
           "execution_error",
           "closed",
           "lost"
+        ]
+      },
+      "TerminalMode": {
+        "type": "string",
+        "description": "Whether the caller of a terminal may type into the sandbox.\n\nA read-only terminal runs a view chosen by the server (the sandbox's working tree status and\nrecent commits, refreshed every few seconds), never a program of the caller's, and the server\ndrops every byte the caller sends; it never writes to the sandbox. A read-write terminal runs\nthe requested program or the default shell and forwards input. The sandbox of a task is\nwritable only to the person who took the task over.",
+        "enum": [
+          "read_only",
+          "read_write"
         ]
       },
       "TerminalServerFrame": {

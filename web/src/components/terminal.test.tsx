@@ -139,6 +139,27 @@ describe("Terminal", () => {
     expect(fake.focused).toBe(true);
   });
 
+  it("opens a read-only terminal with the mode and sends nothing that is typed", async () => {
+    const { socket, fake } = await mounted({ mode: "read_only" });
+    expect(socket.url.searchParams.get("mode")).toBe("read_only");
+    expect(socket.url.searchParams.getAll("command")).toEqual([]);
+    expect(fake.options.disableStdin).toBe(true);
+    act(() => socket.opens());
+    expect(fake.focused).toBe(false);
+
+    fake.type("rm -rf /\r");
+    fake.pasteBinary("\u0001");
+    expect(socket.sent).toEqual([]);
+    act(() => socket.says(new TextEncoder().encode("On branch main\r\n").buffer));
+    expect(fake.written).toEqual(["On branch main\r\n"]);
+  });
+
+  it("asks for no mode when it may type", async () => {
+    const { socket, fake } = await mounted();
+    expect(socket.url.searchParams.has("mode")).toBe(false);
+    expect(fake.options.disableStdin).toBe(false);
+  });
+
   it("types into the process, prints its output and follows resizes", async () => {
     const { socket, fake } = await mounted();
     act(() => socket.opens());

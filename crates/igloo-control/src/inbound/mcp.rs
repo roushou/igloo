@@ -186,6 +186,38 @@ impl Mcp {
     }
 
     #[tool(
+        name = "task.take_over",
+        description = "Takes a task over for the person this token stands for (an agent cannot): \
+                       their terminal in the task's sandbox becomes writable and no turn starts \
+                       until task.hand_back. A running turn finishes. Returns the task, whose \
+                       `takeover` says where it is."
+    )]
+    async fn task_take_over(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(params): Parameters<IdParams>,
+    ) -> CallToolResult {
+        let context = self.context(&parts);
+        Self::result(tasks::take_over_task(&self.state, context, &params.id).await)
+    }
+
+    #[tool(
+        name = "task.hand_back",
+        description = "Hands a taken-over task back once its last turn ended (`takeover.phase` \
+                       is `paused`): the sandbox is read for the commits and uncommitted changes \
+                       the person made, and the task's next turn is asked about them. \
+                       Uncommitted work is left in place."
+    )]
+    async fn task_hand_back(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(params): Parameters<IdParams>,
+    ) -> CallToolResult {
+        let context = self.context(&parts);
+        Self::result(tasks::hand_back_task(&self.state, context, &params.id).await)
+    }
+
+    #[tool(
         name = "change.get",
         description = "Gets a change with its revisions, comments, approvals and the runs of \
                        its checks."

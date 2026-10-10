@@ -58,6 +58,9 @@ arrive.
 optionally a tool of `.igloo/agents.toml`. A task (`/tasks/:id`) shows its goal, state, sandbox and
 change, and a transcript that grows while the agent works: each tool call is one line that expands
 to its input and output, and edits show as removed and added lines. _Cancel task_ stops it.
+_Watch the sandbox_ opens a read-only terminal on it. _Take over_ makes the terminal writable for you
+and starts no further turn once the running one ends; _Hand back_ tells the agent what you changed
+and resumes the task.
 
 **Changes** (`/changes`) lists changes grouped by state. A change (`/changes/:id`) shows the merge
 checklist (checks, approval, fast-forward) above four tabs:

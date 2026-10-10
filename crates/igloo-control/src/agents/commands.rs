@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use igloo_core::Entity;
 use igloo_core::build::BuildId;
 use igloo_core::change::ChangeId;
 use igloo_core::job::{JobEnding, JobId};
 use igloo_core::repo::{Repo, RepoId};
 use igloo_core::sandbox::SandboxId;
 use igloo_core::snapshot::SnapshotId;
+use igloo_core::{Actor, Entity};
 
 use super::ToolName;
-use super::task::{Prepared, Task, TaskId};
+use super::task::{Prepared, Task, TaskError, TaskId};
 use crate::app::{AppError, Command, CommandHandler, RequestContext};
 use crate::ports::{Clock, EntityStore, IdGenerator, IdGeneratorExt, StorageError, Versioned};
 
@@ -140,6 +140,37 @@ pub struct RecordTaskSandboxStopped {
     pub task: TaskId,
 }
 
+/// Takes a task over for the person sending the command: their terminal in the task's sandbox
+/// becomes writable and no turn starts until they hand it back. Refused for anyone but a
+/// person.
+pub struct TakeOverTask {
+    /// The task.
+    pub task: TaskId,
+}
+
+/// Hands a task back on behalf of the person who took it over: the sandbox is read for what
+/// they changed and the task's next turn is asked about it.
+pub struct HandBackTask {
+    /// The task.
+    pub task: TaskId,
+}
+
+/// Records the job reading what the person who took a task over changed.
+pub struct RecordChangesReading {
+    /// The task.
+    pub task: TaskId,
+    /// The job.
+    pub job: JobId,
+}
+
+/// Records that a task was handed back, with the prompt naming what the person changed.
+pub struct RecordHandedBack {
+    /// The task.
+    pub task: TaskId,
+    /// What the tool is asked.
+    pub prompt: String,
+}
+
 macro_rules! commands {
     ($($command:ty => $output:ty, $name:literal;)*) => {
         $(impl Command for $command {
@@ -165,6 +196,10 @@ commands! {
     FailTask => (), "task.fail";
     CancelTask => (), "task.cancel";
     RecordTaskSandboxStopped => (), "task.record_sandbox_stopped";
+    TakeOverTask => (), "task.take_over";
+    HandBackTask => (), "task.hand_back";
+    RecordChangesReading => (), "task.record_changes_reading";
+    RecordHandedBack => (), "task.record_handed_back";
 }
 
 /// Read access to tasks beyond loading one by id.
@@ -198,13 +233,25 @@ impl TaskQueries {
         Ok(tasks)
     }
 
-    /// The task whose turn runs as `job`, or collects its commits.
+    /// The task whose turn runs as `job`, collects its commits, or whose sandbox `job` reads for
+    /// what a person changed.
     pub async fn with_job(&self, job: JobId) -> Result<Option<Task>, StorageError> {
         Ok(self.store.all().await?.into_iter().find(|task| {
             task.turns()
                 .iter()
                 .any(|turn| turn.job == job || turn.bundle == Some(job))
+                || task.changes_job() == Some(job)
         }))
+    }
+
+    /// The task running in `sandbox`.
+    pub async fn with_sandbox(&self, sandbox: SandboxId) -> Result<Option<Task>, StorageError> {
+        Ok(self
+            .store
+            .all()
+            .await?
+            .into_iter()
+            .find(|task| task.sandbox() == Some(sandbox)))
     }
 
     /// The task whose commits form `change`.
@@ -255,5 +302,70 @@ impl CommandHandler<CreateTask> for CreateTaskHandler {
             .commit(&mut Versioned::new(task), &context.commit_meta(now))
             .await?;
         Ok(id)
+    }
+}
+
+/// Takes tasks over and hands them back on behalf of the person sending the command.
+#[derive(Clone)]
+pub(super) struct TakeoverHandler {
+    pub(super) store: Arc<dyn EntityStore<Task>>,
+    pub(super) clock: Arc<dyn Clock>,
+}
+
+impl TakeoverHandler {
+    /// How many times a change is attempted when commits lose races.
+    const ATTEMPTS: usize = 3;
+
+    /// Applies `change` to task `id` as the sender of the command, retrying from a fresh load
+    /// when the commit loses a race.
+    async fn apply(
+        &self,
+        id: TaskId,
+        context: &RequestContext,
+        change: impl Fn(&mut Task, Actor) -> Result<(), TaskError> + Send,
+    ) -> Result<(), AppError> {
+        let mut attempt = 1;
+        loop {
+            let mut task = self
+                .store
+                .load(id)
+                .await?
+                .ok_or_else(|| AppError::not_found(Task::NAME, &id))?;
+            let now = self.clock.now();
+            change(task.entity_mut(), context.actor).map_err(|error| AppError::domain(&error))?;
+            match self
+                .store
+                .commit(&mut task, &context.commit_meta(now))
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) => match AppError::from(error) {
+                    AppError::Conflict if attempt < Self::ATTEMPTS => attempt += 1,
+                    other => return Err(other),
+                },
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl CommandHandler<TakeOverTask> for TakeoverHandler {
+    async fn handle(
+        &self,
+        command: TakeOverTask,
+        context: &RequestContext,
+    ) -> Result<(), AppError> {
+        self.apply(command.task, context, Task::take_over).await
+    }
+}
+
+#[async_trait]
+impl CommandHandler<HandBackTask> for TakeoverHandler {
+    async fn handle(
+        &self,
+        command: HandBackTask,
+        context: &RequestContext,
+    ) -> Result<(), AppError> {
+        self.apply(command.task, context, Task::hand_back).await
     }
 }

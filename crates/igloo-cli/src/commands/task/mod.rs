@@ -9,8 +9,10 @@ use crate::error::CliError;
 
 mod cancel;
 mod create;
+mod hand_back;
 mod list;
 mod show;
+mod take_over;
 mod transcript;
 
 /// Manages tasks: agents working toward a goal on a repository.
@@ -32,6 +34,10 @@ enum TaskCommand {
     Transcript(transcript::Transcript),
     /// Cancels a task and stops its sandbox.
     Cancel(cancel::Cancel),
+    /// Takes a task over: its agent starts no turn and you can type in its sandbox.
+    TakeOver(take_over::TakeOver),
+    /// Hands a taken-over task back to its agent, telling it what you changed.
+    HandBack(hand_back::HandBack),
 }
 
 impl Task {
@@ -43,6 +49,8 @@ impl Task {
             TaskCommand::List(command) => command.execute(client).await,
             TaskCommand::Transcript(command) => command.execute(client).await,
             TaskCommand::Cancel(command) => command.execute(client).await,
+            TaskCommand::TakeOver(command) => command.execute(client).await,
+            TaskCommand::HandBack(command) => command.execute(client).await,
         }
     }
 }

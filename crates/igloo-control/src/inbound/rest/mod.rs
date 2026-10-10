@@ -112,7 +112,8 @@ pub struct RestApi {
         igloo_api::list::ListOrder,
         igloo_api::terminal::TerminalClientFrame,
         igloo_api::terminal::TerminalServerFrame,
-        igloo_api::terminal::TerminalEndReason
+        igloo_api::terminal::TerminalEndReason,
+        igloo_api::terminal::TerminalMode
     )),
     modifiers(&BearerAuth),
     security(("bearer" = []))
@@ -285,6 +286,8 @@ impl RestApi {
             .routes(routes!(tasks::create, tasks::list))
             .routes(routes!(tasks::get))
             .routes(routes!(tasks::cancel))
+            .routes(routes!(tasks::take_over))
+            .routes(routes!(tasks::hand_back))
             .routes(routes!(tasks::transcript))
             .routes(routes!(workspaces::create))
             .routes(routes!(workspaces::list))

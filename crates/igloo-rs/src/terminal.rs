@@ -2,7 +2,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt as _, StreamExt as _};
 use igloo_api::problem::Problem;
 use igloo_api::terminal::{
-    TerminalClientFrame, TerminalEndReason, TerminalRequest, TerminalServerFrame,
+    TerminalClientFrame, TerminalEndReason, TerminalMode, TerminalRequest, TerminalServerFrame,
 };
 use reqwest::Url;
 use tokio::net::TcpStream;
@@ -64,6 +64,7 @@ impl Terminal {
         mut url: Url,
         token: &str,
         command: &[String],
+        mode: TerminalMode,
         cols: u16,
         rows: u16,
     ) -> Result<Self, Error> {
@@ -77,6 +78,9 @@ impl Terminal {
             }
             query.append_pair("cols", &cols.to_string());
             query.append_pair("rows", &rows.to_string());
+            if mode == TerminalMode::ReadOnly {
+                query.append_pair("mode", &mode.to_string());
+            }
         }
         let mut request = url
             .as_str()
@@ -300,6 +304,28 @@ mod tests {
         );
         assert_eq!(seen.authorization.as_deref(), Some("Bearer secret"));
         assert_eq!(seen.protocol.as_deref(), Some(TerminalRequest::PROTOCOL));
+    }
+
+    #[tokio::test]
+    async fn a_read_only_terminal_asks_for_the_mode_and_names_no_command() {
+        let seen = session(
+            |mut socket| async move {
+                socket.close(None).await.ok();
+            },
+            |client| async move {
+                let terminal = client
+                    .attach_terminal("sbx_1", TerminalMode::ReadOnly, 80, 24)
+                    .await
+                    .expect("open");
+                let (_, mut output) = terminal.split();
+                assert_eq!(output.next().await.expect("next"), None);
+            },
+        )
+        .await;
+        assert_eq!(
+            seen.uri,
+            "/v1/sandboxes/sbx_1/terminal?cols=80&rows=24&mode=read_only"
+        );
     }
 
     #[tokio::test]

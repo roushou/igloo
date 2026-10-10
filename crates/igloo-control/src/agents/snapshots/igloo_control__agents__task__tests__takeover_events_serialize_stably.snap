@@ -1,0 +1,29 @@
+---
+source: crates/igloo-control/src/agents/task.rs
+expression: "[TaskEvent::TakenOver { by: id(7) }, TaskEvent::HandBackRequested,\nTaskEvent::ChangesReading { job: id(60) }, TaskEvent::ChangesRead\n{ job: id(60), ending: exited(0), }, TaskEvent::HandedBack\n{ prompt: \"They fixed the typo.\".to_owned(), },]"
+---
+[
+  {
+    "type": "taken_over",
+    "by": "usr_00000000000000000000000007"
+  },
+  {
+    "type": "hand_back_requested"
+  },
+  {
+    "type": "changes_reading",
+    "job": "job_0000000000000000000000001w"
+  },
+  {
+    "type": "changes_read",
+    "job": "job_0000000000000000000000001w",
+    "ending": {
+      "ending": "exited",
+      "code": 0
+    }
+  },
+  {
+    "type": "handed_back",
+    "prompt": "They fixed the typo."
+  }
+]

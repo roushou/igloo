@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/api/client";
+import { api, type TerminalMode } from "@/api/client";
 import { StatusPill } from "@/components/status-pill";
 import { TerminalConnection, type TerminalEnd, type TerminalSnapshot } from "@/lib/terminal";
 import { cn } from "@/lib/utils";
@@ -52,23 +52,26 @@ function themeOf(host: HTMLElement) {
 /**
  * An interactive terminal in a running sandbox, on the dark code surface. It opens a shell (or
  * `command`) when it mounts, fits itself to its box, and ends the process when it unmounts.
- * `command` is read once: remount with a `key` to run something else. `onExit` is called once
- * when the process ends.
+ * `command` and `mode` are read once: remount with a `key` to change them. A `read_only` terminal
+ * shows the server's view of the sandbox, takes no command and sends nothing the person types
+ * (the server drops it as well). `onExit` is called once when the process ends.
  */
 export function Terminal({
   sandboxId,
   command,
+  mode = "read_write",
   onExit,
   className,
 }: {
   sandboxId: string;
   command?: string[];
+  mode?: TerminalMode;
   onExit?: (end: TerminalEnd | null) => void;
   className?: string;
 }) {
   const host = useRef<HTMLElement>(null);
-  const spawn = useRef({ command, onExit });
-  spawn.current = { command, onExit };
+  const spawn = useRef({ command, mode, onExit });
+  spawn.current = { command, mode, onExit };
   const [snapshot, setSnapshot] = useState(NO_SNAPSHOT);
 
   useEffect(() => {
@@ -82,7 +85,8 @@ export function Terminal({
         if (disposed) return;
         const screen = new Screen({
           ...themeOf(element),
-          cursorBlink: true,
+          cursorBlink: spawn.current.mode === "read_write",
+          disableStdin: spawn.current.mode === "read_only",
           scrollback: 5_000,
           allowProposedApi: false,
         });
@@ -91,21 +95,27 @@ export function Terminal({
         screen.open(element);
         fit.fit();
         const live = new TerminalConnection(
-          (size) => api.terminalSocket(sandboxId, { command: spawn.current.command, ...size }),
+          (size) =>
+            api.terminalSocket(sandboxId, {
+              command: spawn.current.command,
+              mode: spawn.current.mode,
+              ...size,
+            }),
           (data) => screen.write(data),
           { cols: screen.cols, rows: screen.rows },
         );
         const unsubscribe = live.subscribe(() => {
           const snapshot = live.getSnapshot();
           const { state, end } = snapshot;
-          if (state === "open") screen.focus();
+          if (state === "open" && spawn.current.mode === "read_write") screen.focus();
           if (state === "exited") spawn.current.onExit?.(end);
           if (state !== "open" && state !== "connecting") screen.options.disableStdin = true;
           setSnapshot(snapshot);
         });
-        const typed = screen.onData((data) => live.type(data));
-        const binary = screen.onBinary((data) =>
-          live.type(Uint8Array.from(data, (c) => c.charCodeAt(0))),
+        const writable = spawn.current.mode === "read_write";
+        const typed = screen.onData((data) => writable && live.type(data));
+        const binary = screen.onBinary(
+          (data) => writable && live.type(Uint8Array.from(data, (c) => c.charCodeAt(0))),
         );
         const resized = screen.onResize(({ cols, rows }) => live.resize({ cols, rows }));
         const observer = new ResizeObserver(() => fit.fit());

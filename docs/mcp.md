@@ -11,6 +11,8 @@ merging stay with a human, through the CLI.
 | `task.get`, `task.list`  | A task: phase, turns, change, error; a repository's tasks        |
 | `task.transcript`        | What the task's agent said and did, from a position on           |
 | `task.cancel`            | Cancels a task and stops its sandbox                             |
+| `task.take_over`         | A person takes a task over: terminal writable, no new turn       |
+| `task.hand_back`         | Hands it back; the next turn is told what the person changed     |
 | `change.get`             | A change with its revisions, comments, approvals and check runs  |
 | `change.comment`         | Comments on a revision, optionally on a line of a file           |
 | `change.request_changes` | Sends the comments since the last request to the task's agent    |

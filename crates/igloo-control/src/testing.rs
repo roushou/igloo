@@ -56,6 +56,7 @@ pub(crate) struct MemoryStores {
     pub(crate) jobs: Arc<dyn EntityStore<Job>>,
     pub(crate) seals: Arc<dyn EntityStore<Seal>>,
     pub(crate) workspaces: Arc<dyn EntityStore<Workspace>>,
+    pub(crate) tasks: Arc<dyn EntityStore<crate::agents::Task>>,
     pub(crate) secrets: Arc<dyn SecretStore>,
     /// Holds the forge's mirrors for as long as the platform lives.
     pub(crate) forge_dir: Arc<tempfile::TempDir>,
@@ -127,7 +128,7 @@ impl MemoryPlatform {
         builder.provide_store(builds);
         builder.provide_store(runs);
         builder.provide_store(outcomes);
-        builder.provide_store(tasks);
+        builder.provide_store(Arc::clone(&tasks));
         builder.provide_store(Arc::clone(&workspaces));
         Self {
             builder,
@@ -138,6 +139,7 @@ impl MemoryPlatform {
                 jobs,
                 seals,
                 workspaces,
+                tasks,
                 blobs,
                 secrets,
                 forge_dir: Arc::new(forge_dir),

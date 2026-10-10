@@ -7,21 +7,29 @@
 //! process exits (the server sends [`TerminalServerFrame::Exit`], then closes) or when either
 //! side closes the socket (the process is killed).
 
+use std::fmt::{self, Display, Formatter};
+use std::str::FromStr;
+
 use igloo_core::terminal::{TerminalFailure, TerminalOutcome, TerminalSize};
 use igloo_core::{ValidationErrors, Validator};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// The query of a terminal request: what to run and the screen to start with.
+use crate::list::UnknownValue;
+
+/// The query of a terminal request: what to run, the screen to start with, and whether the
+/// caller may type.
 ///
 /// Invariant: `size` is a valid screen; `command` is the program and its arguments, empty for
-/// the sandbox's default shell.
+/// the sandbox's default shell; a read-only request names no command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalRequest {
     /// The program and its arguments; empty runs `sh`.
     pub command: Vec<String>,
     /// The initial screen; 80x24 when the query names none.
     pub size: TerminalSize,
+    /// Whether the caller may type; read-write when the query names none.
+    pub mode: TerminalMode,
 }
 
 impl TerminalRequest {
@@ -32,6 +40,45 @@ impl TerminalRequest {
     pub const BEARER_PROTOCOL_PREFIX: &'static str = "igloo.bearer.";
 }
 
+/// Whether the caller of a terminal may type into the sandbox.
+///
+/// A read-only terminal runs a view chosen by the server (the sandbox's working tree status and
+/// recent commits, refreshed every few seconds), never a program of the caller's, and the server
+/// drops every byte the caller sends; it never writes to the sandbox. A read-write terminal runs
+/// the requested program or the default shell and forwards input. The sandbox of a task is
+/// writable only to the person who took the task over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TerminalMode {
+    /// Watch only.
+    ReadOnly,
+    /// Watch and type.
+    #[default]
+    ReadWrite,
+}
+
+impl FromStr for TerminalMode {
+    type Err = UnknownValue;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "read_only" => Ok(Self::ReadOnly),
+            "read_write" => Ok(Self::ReadWrite),
+            other => Err(UnknownValue(other.to_owned())),
+        }
+    }
+}
+
+impl Display for TerminalMode {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ReadOnly => "read_only",
+            Self::ReadWrite => "read_write",
+        })
+    }
+}
+
 impl TryFrom<Vec<(String, String)>> for TerminalRequest {
     type Error = ValidationErrors;
 
@@ -40,6 +87,7 @@ impl TryFrom<Vec<(String, String)>> for TerminalRequest {
         let default = TerminalSize::DEFAULT;
         let mut cols = Ok(u32::from(default.cols()));
         let mut rows = Ok(u32::from(default.rows()));
+        let mut mode = Ok(TerminalMode::default());
         let number = |value: &str| {
             value
                 .parse::<u32>()
@@ -50,17 +98,29 @@ impl TryFrom<Vec<(String, String)>> for TerminalRequest {
                 "command" => command.push(value),
                 "cols" => cols = number(&value),
                 "rows" => rows = number(&value),
+                "mode" => mode = value.parse::<TerminalMode>(),
                 _ => {}
             }
         }
-        let (cols, rows) = Validator::new()
+        let (cols, rows, mode) = Validator::new()
             .field("cols", cols)
             .field("rows", rows)
+            .field("mode", mode)
             .finish()?;
         let (size,) = Validator::new()
             .field("size", TerminalSize::new(cols, rows))
             .finish()?;
-        Ok(Self { command, size })
+        if mode == TerminalMode::ReadOnly && !command.is_empty() {
+            return Err(ValidationErrors::single(
+                "command",
+                "a read-only terminal runs the server's view, not a command",
+            ));
+        }
+        Ok(Self {
+            command,
+            size,
+            mode,
+        })
     }
 }
 
@@ -179,6 +239,30 @@ mod tests {
         assert_eq!(request.size, TerminalSize::new(120, 40).expect("size"));
     }
 
+    #[test]
+    fn the_mode_defaults_to_read_write_and_a_read_only_request_names_no_command() {
+        let default = TerminalRequest::try_from(Vec::new()).expect("request");
+        assert_eq!(default.mode, TerminalMode::ReadWrite);
+        let read_only =
+            TerminalRequest::try_from(query(&[("mode", "read_only")])).expect("request");
+        assert_eq!(read_only.mode, TerminalMode::ReadOnly);
+        assert_eq!(read_only.mode.to_string(), "read_only");
+
+        let errors = TerminalRequest::try_from(query(&[("mode", "read_only"), ("command", "sh")]))
+            .expect_err("a command to watch with");
+        assert_eq!(
+            errors.fields().map(|(field, _)| field).collect::<Vec<_>>(),
+            ["command"]
+        );
+        let errors = TerminalRequest::try_from(query(&[("mode", "sideways")])).expect_err("mode");
+        assert_eq!(
+            errors.fields().map(|(field, _)| field).collect::<Vec<_>>(),
+            ["mode"]
+        );
+        assert!(
+            TerminalRequest::try_from(query(&[("mode", "read_write"), ("command", "sh")])).is_ok()
+        );
+    }
     #[test]
     fn every_bad_dimension_is_reported() {
         let errors = TerminalRequest::try_from(query(&[("cols", "wide"), ("rows", "tall")]))

@@ -137,3 +137,19 @@ Igloo that breaks Igloo):
 
 Plain SSH to the host is the break-glass for everything else: `journalctl -u igloo-control` for the
 server's logs, and `docs/deploy.md` for restarting it.
+
+## Attach to an agent's sandbox
+
+```sh
+igloo task take-over <task id>    # no new turn starts; a running turn finishes first
+igloo shell <task id>             # a terminal in the task's sandbox, writable for you only
+igloo task hand-back <task id>    # the agent continues, told what you changed
+```
+
+The task page shows the same: _Watch the sandbox_ is a read-only view (the server drops anything a
+read-only terminal is sent), _Take over_ makes it writable. The sandbox keeps running while a task
+is taken over. Handing back is possible once the turn that was running has ended; the agent's next
+turn is told which commits you added since its own last one (subjects and a diff stat) and which
+changes you left uncommitted. Your uncommitted work stays where it is; the task's next collection
+commits it with the agent's. Only the person who took a task over can type in its sandbox or hand
+it back; cancel the task to release a takeover nobody will finish.

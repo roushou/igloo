@@ -68,6 +68,42 @@ pub struct TurnResource {
     pub reason: Option<String>,
 }
 
+/// Where a person's takeover of a task is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TakeoverPhase {
+    /// A turn is still finishing, or its commits are being collected; it is not interrupted and
+    /// no further turn starts. The person's terminal is writable already.
+    Waiting,
+    /// No turn runs; the person may hand the task back.
+    Paused,
+    /// The person handed the task back; the sandbox is being read for what they changed, and
+    /// their terminal is no longer writable.
+    HandingBack,
+}
+
+/// A person's hold on a task's sandbox.
+///
+/// While it lasts no turn of the task starts; the sandbox keeps running until the task ends.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct TakeoverResource {
+    /// The person (`usr_...`) who took the task over: the only one who may type in its
+    /// sandbox's terminal and hand it back.
+    pub by: String,
+    /// Where it is.
+    pub phase: TakeoverPhase,
+}
+
+impl TakeoverResource {
+    /// The takeover by `by` at `phase`.
+    #[must_use]
+    pub const fn new(by: String, phase: TakeoverPhase) -> Self {
+        Self { by, phase }
+    }
+}
+
 /// A task.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[non_exhaustive]
@@ -95,6 +131,9 @@ pub struct TaskResource {
     /// Why it failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The person holding the task, while someone does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverResource>,
     /// Its turns, oldest first.
     pub turns: Vec<TurnResource>,
     /// When it was created.
@@ -161,6 +200,7 @@ impl TaskResource {
             sandbox: None,
             change: None,
             error: None,
+            takeover: None,
             turns: Vec::new(),
             created_at,
         }
@@ -192,6 +232,13 @@ impl TaskResource {
     #[must_use]
     pub fn with_error(mut self, error: impl Into<String>) -> Self {
         self.error = Some(error.into());
+        self
+    }
+
+    /// Sets the takeover.
+    #[must_use]
+    pub fn with_takeover(mut self, takeover: TakeoverResource) -> Self {
+        self.takeover = Some(takeover);
         self
     }
 

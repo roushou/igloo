@@ -82,6 +82,9 @@ impl Harness {
             })
             .expect("workspace module");
         builder.install(RepoModule).expect("repo module");
+        builder
+            .install(crate::agents::AgentsModule { settings })
+            .expect("agents module");
         let supervisor = TaskSupervisor::new();
         let urls = blob_urls(Arc::clone(&builder.ports().clock));
         let usages = WorkerUsages::new();
@@ -1221,5 +1224,270 @@ async fn a_workspaces_terminal_gets_its_secrets_and_marks_the_workspace_used() {
         .expect("a credential minted by this server");
     assert_eq!((grant.workspace, grant.sandbox), (workspace, sandbox));
     wait_until(async || activity().await.last_activity() > before).await;
+    harness.stop().await;
+}
+
+impl Harness {
+    /// A task that finished its first turn in `sandbox` and awaits review.
+    async fn task_awaiting_review(&self, sandbox: SandboxId) -> crate::agents::TaskId {
+        use std::collections::BTreeSet;
+
+        use igloo_core::job::JobEnding;
+        use igloo_core::process::EnvVars;
+        use igloo_core::sandbox::{Isolation, NetworkPolicy, ResourceLimits};
+
+        use crate::agents::{HarnessKind, Prepared, Task, ToolSpec};
+        use crate::ci::SandboxSettings;
+        use crate::ports::Versioned;
+
+        let ok = JobEnding::Exited { code: 0 };
+        let job = |n: u128| Id::from_uuid(Uuid::from_u128(n));
+        let prepared = Prepared {
+            commit: "a".repeat(40).parse().expect("commit"),
+            tool: "agent".parse().expect("tool"),
+            spec: ToolSpec {
+                harness: HarnessKind::Command,
+                install: None,
+                command: Some("./agent".to_owned()),
+                secrets: BTreeSet::new(),
+                timeout_seconds: 60,
+                max_turns: 10,
+            },
+            settings: SandboxSettings {
+                isolation: Isolation::Any,
+                limits: ResourceLimits::default(),
+                network: NetworkPolicy::DenyAll,
+                env: EnvVars::default(),
+                secrets: BTreeSet::new(),
+            },
+            base: None,
+            warm: None,
+        };
+        let id = Id::from_uuid(Uuid::from_u128(500));
+        let repo = Id::from_uuid(Uuid::from_u128(501));
+        let mut task =
+            Task::new(id, repo, "Fix it".to_owned(), None, crate::testing::START).expect("task");
+        task.prepared(prepared).expect("prepared");
+        task.ready(register_snapshot(&self.bus).await)
+            .expect("ready");
+        task.sandbox_started(sandbox).expect("sandbox");
+        task.turn_started(job(510), "Fix it".to_owned())
+            .expect("turn");
+        task.job_ended(job(510), ok);
+        task.collecting(job(511)).expect("collecting");
+        task.job_ended(job(511), ok);
+        task.revised(Id::from_uuid(Uuid::from_u128(502)), 1)
+            .expect("revised");
+        let meta = context().commit_meta(crate::testing::START);
+        self.stores
+            .tasks
+            .commit(&mut Versioned::new(task), &meta)
+            .await
+            .expect("commit task");
+        id
+    }
+
+    async fn task_call(&self, method: &str, uri: &str) -> (u16, serde_json::Value) {
+        let request = HttpRequest::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {API_TOKEN}"))
+            .body(Body::empty())
+            .expect("request");
+        let response = self.rest.clone().oneshot(request).await.expect("response");
+        let status = response.status().as_u16();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (status, serde_json::from_slice(&body).unwrap_or_default())
+    }
+}
+
+/// What the worker is sent after `terminal`'s open, past input that never arrives: sends
+/// `typed`, then a resize, and returns the first message that reaches the worker.
+async fn after_typing(socket: &mut WsClient, worker: &mut WorkerClient, typed: &[u8]) -> Outbound {
+    socket.send_binary(typed).await;
+    socket
+        .send_text(r#"{"type":"resize","cols":90,"rows":20}"#)
+        .await;
+    worker
+        .until(|message| match message {
+            Outbound::TerminalInput(_) | Outbound::ResizeTerminal(_) => Some(message),
+            _ => None,
+        })
+        .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_read_only_terminal_runs_the_servers_view_and_drops_what_is_typed() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+    let task = harness.task_awaiting_review(sandbox).await;
+    assert_eq!(task.to_string().len(), 31);
+
+    let mut socket = harness
+        .terminal(sandbox, "?mode=read_only", &[BEARER])
+        .await
+        .expect("upgrade");
+    let open = worker.open_terminal().await;
+    assert_eq!(&open.argv[..2], ["sh", "-c"], "the server's own view");
+    assert!(
+        open.argv[2].contains("--no-optional-locks"),
+        "{:?}",
+        open.argv
+    );
+    assert!(
+        open.env.is_empty(),
+        "no secrets or credentials: {:?}",
+        open.env
+    );
+
+    let reached = after_typing(&mut socket, &mut worker, b"rm -rf /workspace\n").await;
+    assert!(
+        matches!(reached, Outbound::ResizeTerminal(_)),
+        "the typing was dropped, the resize followed: {reached:?}"
+    );
+
+    let refused = harness
+        .terminal(sandbox, "?mode=read_only&command=sh", &[BEARER])
+        .await
+        .expect_err("a read-only terminal runs no command of the caller's");
+    assert_eq!(refused.status, 422);
+    let refused = harness
+        .terminal(sandbox, "?mode=sideways", &[BEARER])
+        .await
+        .expect_err("unknown mode");
+    assert_eq!(refused.status, 422);
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_task_sandbox_is_writable_only_to_the_person_who_took_the_task_over() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+    let task = harness.task_awaiting_review(sandbox).await;
+
+    for query in ["", "?mode=read_write"] {
+        let refused = harness
+            .terminal(sandbox, query, &[BEARER])
+            .await
+            .expect_err("not taken over");
+        assert_eq!(refused.status, 409, "{query}");
+        assert!(
+            refused.body.contains("task.not_taken_over"),
+            "{}",
+            refused.body
+        );
+    }
+
+    let (status, taken) = harness
+        .task_call("POST", &format!("/v1/tasks/{task}/take-over"))
+        .await;
+    assert_eq!(status, 200, "{taken}");
+    assert_eq!(taken["takeover"]["phase"], "paused");
+    assert_eq!(
+        taken["takeover"]["by"],
+        Id::<igloo_core::User>::from_uuid(Uuid::from_u128(7)).to_string()
+    );
+
+    let mut socket = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect("the person who took the task over types");
+    worker.open_terminal().await;
+    socket.send_binary(b"ls\n").await;
+    let Outbound::TerminalInput(input) = worker.next().await else {
+        panic!("their typing reaches the sandbox");
+    };
+    assert_eq!(input.data, b"ls\n");
+
+    // Watching stays possible, and still drops input.
+    let mut watching = harness
+        .terminal(sandbox, "?mode=read_only", &[BEARER])
+        .await
+        .expect("upgrade");
+    worker.open_terminal().await;
+    let reached = after_typing(&mut watching, &mut worker, b"x").await;
+    assert!(
+        matches!(reached, Outbound::ResizeTerminal(_)),
+        "{reached:?}"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handing_the_task_back_stops_the_persons_typing_and_reads_the_sandbox() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+    let task = harness.task_awaiting_review(sandbox).await;
+    harness
+        .task_call("POST", &format!("/v1/tasks/{task}/take-over"))
+        .await;
+    let mut socket = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect("upgrade");
+    worker.open_terminal().await;
+
+    let (status, handed) = harness
+        .task_call("POST", &format!("/v1/tasks/{task}/hand-back"))
+        .await;
+    assert_eq!(status, 200, "{handed}");
+    assert_eq!(handed["takeover"]["phase"], "handing_back");
+
+    // The agents controller submits the job reading the sandbox: it only reads.
+    let grant = worker.lease_grant().await;
+    assert_eq!(&grant.argv[..2], ["sh", "-c"]);
+    assert!(
+        grant.argv[2].contains("--no-optional-locks"),
+        "{:?}",
+        grant.argv
+    );
+    assert!(grant.argv[2].contains("git status --porcelain"));
+    assert_eq!(grant.env.get("IGLOO_TASK"), Some(&task.to_string()));
+    assert_eq!(grant.env.get("IGLOO_BASE"), Some(&"a".repeat(40)));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let reached = after_typing(&mut socket, &mut worker, b"git commit\n").await;
+    assert!(
+        matches!(reached, Outbound::ResizeTerminal(_)),
+        "typing after the hand-back is dropped: {reached:?}"
+    );
+    let refused = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect_err("being handed back");
+    assert!(
+        refused.body.contains("task.handing_back"),
+        "{}",
+        refused.body
+    );
+    worker
+        .send(Inbound::JobStarted(v1::JobStarted {
+            job_id: grant.job_id.clone(),
+            token: grant.token,
+        }))
+        .await;
+    let mut chunk = v1::LogChunk {
+        job_id: grant.job_id.clone(),
+        token: grant.token,
+        offset: 0,
+        data: b"@@commits\nabc1234 Add b\n@@stat\n b.txt | 1 +\n@@uncommitted\n?? notes.txt\n\
+                @@uncommitted-stat\n@@end\n"
+            .to_vec(),
+        ..v1::LogChunk::default()
+    };
+    chunk.set_stream(OutputStream::Stdout.into());
+    worker.send(Inbound::LogChunk(chunk)).await;
+    worker.report(&grant.job_id, grant.token, 0).await;
+
+    // The next turn is asked about what the person changed.
+    let turn = worker.lease_grant().await;
+    let prompt = turn.env.get("IGLOO_PROMPT").expect("the turn's prompt");
+    assert!(prompt.contains("abc1234 Add b"), "{prompt}");
+    assert!(prompt.contains("notes.txt"), "{prompt}");
+    assert!(prompt.contains("left in place"), "{prompt}");
+    let (status, task_now) = harness.task_call("GET", &format!("/v1/tasks/{task}")).await;
+    assert_eq!(status, 200);
+    assert!(task_now.get("takeover").is_none(), "{task_now}");
     harness.stop().await;
 }

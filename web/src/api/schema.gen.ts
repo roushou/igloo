@@ -555,7 +555,13 @@ export interface paths {
         /**
          * Opens an interactive terminal in a running sandbox: upgrades to a WebSocket speaking the
          *     subprotocol `igloo.terminal.v1`.
-         * @description Binary frames carry the terminal's bytes in both directions. Text frames carry JSON control
+         * @description With `mode=read_only` the caller watches: the server runs its own view of the sandbox (a
+         *     command of the caller's is refused) and drops every input frame, so nothing the caller sends
+         *     reaches the sandbox. The default `read_write` forwards input. In the sandbox of a task it is
+         *     refused (409) unless the caller is the person who took the task over, and it stops forwarding
+         *     input once the task is handed back.
+         *
+         *     Binary frames carry the terminal's bytes in both directions. Text frames carry JSON control
          *     messages: the client sends `TerminalClientFrame` (resize); the server sends one
          *     `TerminalServerFrame` (exit) and closes the socket when the process ends. Closing the socket
          *     kills the process. Authenticated like the rest of the API; a browser, which cannot set headers
@@ -706,6 +712,51 @@ export interface paths {
          *     a task that failed collecting its commits stops the sandbox it kept for recovery.
          */
         post: operations["cancelTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{id}/hand-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hands a task back, as the person who took it over, once its last turn ended and its commits
+         *     became a revision (until then the request is refused with `task.turn_running`). The sandbox
+         *     is read for what the person changed, without touching it, and the task's next turn is asked
+         *     about the commits they added and the changes they left uncommitted. Uncommitted work stays in
+         *     place. Handing back a task already being handed back changes nothing.
+         */
+        post: operations["handBackTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{id}/take-over": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Takes a task over for the caller, who must be a person: the caller's terminal in the task's
+         *     sandbox (`GET /v1/sandboxes/{id}/terminal?mode=read_write`) becomes writable and no turn
+         *     starts until they hand the task back. A running turn is not interrupted. The sandbox keeps
+         *     running until the task ends. Taking over a task the caller already holds changes nothing.
+         */
+        post: operations["takeOverTask"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1524,6 +1575,25 @@ export interface components {
             reclaimed_bytes: number;
         };
         /**
+         * @description Where a person's takeover of a task is.
+         * @enum {string}
+         */
+        TakeoverPhase: "waiting" | "paused" | "handing_back";
+        /**
+         * @description A person's hold on a task's sandbox.
+         *
+         *     While it lasts no turn of the task starts; the sandbox keeps running until the task ends.
+         */
+        TakeoverResource: {
+            /**
+             * @description The person (`usr_...`) who took the task over: the only one who may type in its
+             *     sandbox's terminal and hand it back.
+             */
+            by: string;
+            /** @description Where it is. */
+            phase: components["schemas"]["TakeoverPhase"];
+        };
+        /**
          * @description Where a task is.
          * @enum {string}
          */
@@ -1551,6 +1621,7 @@ export interface components {
             repo: string;
             /** @description Its sandbox, once started. */
             sandbox?: string | null;
+            takeover?: components["schemas"]["TakeoverResource"] | null;
             /** @description The tool, once settled. */
             tool?: string | null;
             /** @description Its turns, oldest first. */
@@ -1576,6 +1647,17 @@ export interface components {
          * @enum {string}
          */
         TerminalEndReason: "sandbox_unavailable" | "execution_error" | "closed" | "lost";
+        /**
+         * @description Whether the caller of a terminal may type into the sandbox.
+         *
+         *     A read-only terminal runs a view chosen by the server (the sandbox's working tree status and
+         *     recent commits, refreshed every few seconds), never a program of the caller's, and the server
+         *     drops every byte the caller sends; it never writes to the sandbox. A read-write terminal runs
+         *     the requested program or the default shell and forwards input. The sandbox of a task is
+         *     writable only to the person who took the task over.
+         * @enum {string}
+         */
+        TerminalMode: "read_only" | "read_write";
         /** @description A text frame the server sends. */
         TerminalServerFrame: {
             /**
@@ -3166,6 +3248,8 @@ export interface operations {
                 cols?: number;
                 /** @description Initial rows, 1 to 65535; 24 when omitted */
                 rows?: number;
+                /** @description `read_only` to watch, which takes no command; `read_write` (the default) to type */
+                mode?: components["schemas"]["TerminalMode"];
             };
             header?: never;
             path: {
@@ -3484,6 +3568,80 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    handBackTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    takeOverTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
