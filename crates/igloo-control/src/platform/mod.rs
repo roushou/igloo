@@ -5,6 +5,8 @@ mod build;
 mod change;
 mod checkout;
 mod job;
+mod mirror;
+mod push;
 mod repo;
 mod sandbox;
 mod seal;
@@ -30,6 +32,8 @@ pub use job::{
     CancelJob, FailJob, FailLostLease, FinishJob, JobModule, JobQueries, LeaseJob, RenewJobLease,
     StartJob, SubmitJob, SubmitJobError,
 };
+pub use mirror::{ForgeMirror, MirrorModule};
+pub use push::{BranchPushes, Branches, PushedChange};
 pub use repo::{
     DeleteSecret, ForgetWarmSnapshots, RecordImage, RecordWarmSnapshot, RecordWarmUse,
     RegisterRepo, RepoError, RepoModule, RepoQueries, SetSecret,

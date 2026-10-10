@@ -6,22 +6,57 @@ use igloo_core::repo::{BranchName, CommitId, RepoId, RepoLocation};
 
 use super::SecretValue;
 
-/// The git host of repositories. Igloo keeps a mirror of each repository; fetches land in it
-/// and pushes come from it.
+/// Igloo's copy of each repository, and the forge it is mirrored to. The copy is authoritative:
+/// branches in it move only through [`Forge::advance`] and [`Forge::remove`] and through pushes
+/// to Igloo's own git endpoint; the forge receives them through [`Forge::push`] and
+/// [`Forge::delete`], and offers new commits through [`Forge::fetch`].
 #[async_trait]
 pub trait Forge: Send + Sync {
-    /// Fetches `branch` from the forge into the mirror; returns its head.
+    /// Brings `branch` of the forge into Igloo's copy and returns the copy's head of it. The
+    /// copy wins: a branch it has moves to the forge's head only when that descends from the
+    /// copy's, and a branch the forge lacks but the copy has is returned as it is. Fails with
+    /// [`ForgeError::BranchNotFound`] when neither has the branch.
     async fn fetch(&self, remote: &Remote, branch: &BranchName) -> Result<CommitId, ForgeError>;
 
-    /// The head of `branch` in `repo`'s mirror as of its last fetch, without reaching the
-    /// forge; `None` when the mirror does not exist or lacks the branch.
+    /// The head of `branch` in `repo`'s copy, without reaching the forge; `None` when the copy
+    /// does not exist or lacks the branch.
     async fn mirrored(
         &self,
         repo: RepoId,
         branch: &BranchName,
     ) -> Result<Option<CommitId>, ForgeError>;
 
-    /// Pushes `commit`, present in the mirror, to `branch` on the forge, provided the branch
+    /// Brings `branch` of the forge into Igloo's copy, the forge's head replacing the copy's
+    /// whatever the copy had, and returns the copy's head. For branches the forge is the source of,
+    /// such as a change branch pushed to the forge and then revised. A branch the forge lacks but
+    /// the copy has is returned as it is. Fails with [`ForgeError::BranchNotFound`] when neither
+    /// has the branch.
+    async fn adopt(&self, remote: &Remote, branch: &BranchName) -> Result<CommitId, ForgeError>;
+
+    /// Every branch of `repo`'s copy and its head, sorted by name; empty when the copy does not
+    /// exist.
+    async fn branches(&self, repo: RepoId) -> Result<Vec<(BranchName, CommitId)>, ForgeError>;
+
+    /// Moves `branch` in `repo`'s copy to `commit`, which the copy holds, provided the branch is
+    /// as `expected`. A branch already at `commit` is left as it is, whatever `expected` says.
+    async fn advance(
+        &self,
+        repo: RepoId,
+        branch: &BranchName,
+        commit: &CommitId,
+        expected: Expected,
+    ) -> Result<(), ForgeError>;
+
+    /// Deletes `branch` from `repo`'s copy, provided it is at `at`. A branch already gone counts
+    /// as deleted; one at another commit is left as it is and reported as moved.
+    async fn remove(
+        &self,
+        repo: RepoId,
+        branch: &BranchName,
+        at: &CommitId,
+    ) -> Result<(), ForgeError>;
+
+    /// Pushes `commit`, present in the copy, to `branch` on the forge, provided the branch
     /// is as `expected`. A branch already at `commit` is left as it is, whatever `expected`
     /// says, so retrying a push is safe.
     async fn push(
@@ -171,6 +206,8 @@ pub struct Remote {
 pub enum Expected {
     /// Anything: the branch is overwritten.
     Any,
+    /// The branch does not exist, or is an ancestor of the commit.
+    FastForward,
     /// The branch does not exist yet.
     Absent,
     /// The branch is at this commit.
@@ -183,7 +220,7 @@ pub enum ForgeError {
     /// The branch does not exist on the forge.
     #[error("branch {0} not found")]
     BranchNotFound(BranchName),
-    /// The branch is not as the push expected.
+    /// The branch is not as the update expected.
     #[error("branch {0} moved")]
     Moved(BranchName),
     /// The commit is not in the mirror.

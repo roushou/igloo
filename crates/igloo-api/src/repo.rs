@@ -34,6 +34,10 @@ pub struct RepoResource {
     /// The secret holding the forge token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_secret: Option<String>,
+    /// Where Igloo serves the repository over git, relative to the API: `/git/<id>.git`. Clone
+    /// and push there with the API token as the password.
+    #[serde(default)]
+    pub git_path: String,
 }
 
 /// Makes a snapshot of a repository at a commit: its checkout under `/workspace`, with a shallow
@@ -216,6 +220,7 @@ impl From<&Repo> for RepoResource {
             location: repo.location().to_string(),
             default_branch: repo.default_branch().to_string(),
             token_secret: repo.token().map(ToString::to_string),
+            git_path: format!("/git/{}.git", repo.id()),
         }
     }
 }

@@ -29,7 +29,7 @@ pub(crate) struct Output {
 
 impl<'a> Invocation<'a> {
     /// Repository location variables git must not take from the caller's environment.
-    const REPOSITORY_VARIABLES: [&'static str; 8] = [
+    pub(crate) const REPOSITORY_VARIABLES: [&'static str; 8] = [
         "GIT_DIR",
         "GIT_WORK_TREE",
         "GIT_INDEX_FILE",

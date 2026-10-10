@@ -27,6 +27,9 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// What `git update-ref` reads as "the ref must not exist".
+    const NO_COMMIT: &'static str = "0000000000000000000000000000000000000000";
+
     pub(crate) const fn new(git: Git, dir: PathBuf) -> Self {
         Self { git, dir }
     }
@@ -66,6 +69,37 @@ impl Repository {
     /// The commit `name` points at, if it exists and points at one.
     pub async fn resolve(&self, name: &RefName) -> Result<Option<CommitId>, GitError> {
         self.verify(&format!("{name}^{{commit}}")).await
+    }
+
+    /// The local branches and the commits they point at, sorted by name.
+    pub async fn branches(&self) -> Result<Vec<(BranchName, CommitId)>, GitError> {
+        let output = self
+            .invoke("for-each-ref")
+            .arg("--format=%(objectname) %(refname)")
+            .arg("refs/heads/")
+            .output()
+            .await?;
+        if output.status != Some(0) {
+            return Err(output.into_error());
+        }
+        output
+            .text()?
+            .lines()
+            .map(|line| {
+                let (commit, name) = line
+                    .split_once(' ')
+                    .ok_or_else(|| output.unexpected(format!("not a ref: {line}")))?;
+                let commit = commit
+                    .parse()
+                    .map_err(|_| output.unexpected(format!("not a commit id: {commit}")))?;
+                let branch = name
+                    .parse::<RefName>()
+                    .ok()
+                    .and_then(|name| name.branch())
+                    .ok_or_else(|| output.unexpected(format!("not a branch: {name}")))?;
+                Ok((branch, commit))
+            })
+            .collect()
     }
 
     /// Whether the repository has `commit`.
@@ -345,12 +379,13 @@ impl Repository {
         lease: &Lease,
     ) -> Result<(), GitError> {
         let target = RefName::from(branch);
-        let lease = match lease {
-            Lease::Any => "--force".to_owned(),
-            Lease::Absent => format!("--force-with-lease={target}:"),
-            Lease::At(current) => format!("--force-with-lease={target}:{current}"),
+        let push = self.invoke("push").arg("--porcelain");
+        let push = match lease {
+            Lease::Any => push.arg("--force"),
+            Lease::FastForward => push,
+            Lease::Absent => push.arg(format!("--force-with-lease={target}:")),
+            Lease::At(current) => push.arg(format!("--force-with-lease={target}:{current}")),
         };
-        let push = self.invoke("push").arg("--porcelain").arg(lease);
         let output = Self::endpoint(push, to)
             .arg(format!("{commit}:{target}"))
             .output()
@@ -362,6 +397,81 @@ impl Repository {
             .ok()
             .and_then(PushRejection::from_porcelain);
         Err(rejection.map_or_else(|| output.into_error(), GitError::Rejected))
+    }
+
+    /// Moves `branch` of this repository to `commit`, creating it if needed, provided it is as
+    /// `lease` expects. A branch already at `commit` is left as it is, whatever the lease says.
+    ///
+    /// Fails with [`GitError::Rejected`] when the branch is not as expected.
+    pub async fn update_branch(
+        &self,
+        branch: &BranchName,
+        commit: &CommitId,
+        lease: &Lease,
+    ) -> Result<(), GitError> {
+        let name = RefName::from(branch);
+        let current = self.resolve(&name).await?;
+        if current.as_ref() == Some(commit) {
+            return Ok(());
+        }
+        let refusal = match (lease, &current) {
+            (Lease::Absent, Some(_)) => Some(PushRejection::Stale),
+            (Lease::At(at), current) if current.as_ref() != Some(at) => Some(PushRejection::Stale),
+            (Lease::FastForward, Some(current))
+                if self.merge_base(current, commit).await?.as_ref() != Some(current) =>
+            {
+                Some(PushRejection::NotFastForward)
+            }
+            _ => None,
+        };
+        if let Some(rejection) = refusal {
+            return Err(GitError::Rejected(rejection));
+        }
+        let output = self
+            .invoke("update-ref")
+            .arg(name.as_str())
+            .arg(commit.as_str())
+            .arg(current.as_ref().map_or(Self::NO_COMMIT, CommitId::as_str))
+            .output()
+            .await?;
+        if output.status == Some(0) {
+            Ok(())
+        } else if self.resolve(&name).await? == current {
+            Err(output.into_error())
+        } else {
+            // Another update won the race for the branch.
+            Err(GitError::Rejected(PushRejection::Stale))
+        }
+    }
+
+    /// Deletes `branch` of this repository, provided it is at `at`. A branch elsewhere, or
+    /// already gone, is refused as [`PushRejection::Stale`].
+    pub async fn remove_branch(&self, branch: &BranchName, at: &CommitId) -> Result<(), GitError> {
+        let name = RefName::from(branch);
+        let output = self
+            .invoke("update-ref")
+            .arg("-d")
+            .arg(name.as_str())
+            .arg(at.as_str())
+            .output()
+            .await?;
+        if output.status == Some(0) {
+            Ok(())
+        } else if self.resolve(&name).await?.as_ref() == Some(at) {
+            Err(output.into_error())
+        } else {
+            Err(GitError::Rejected(PushRejection::Stale))
+        }
+    }
+
+    /// Points `HEAD` at `branch`, which need not exist yet.
+    pub async fn set_head(&self, branch: &BranchName) -> Result<(), GitError> {
+        self.invoke("symbolic-ref")
+            .arg("HEAD")
+            .arg(RefName::from(branch).as_str())
+            .run()
+            .await
+            .map(drop)
     }
 
     /// Deletes `branch` at `to`, provided it is at `at`. A branch elsewhere, or already
@@ -955,5 +1065,140 @@ mod tests {
         );
 
         assert_eq!(repo.file_diffs(&next, &next).await.expect("same"), []);
+    }
+}
+
+#[cfg(test)]
+mod local_branch_tests {
+    use igloo_core::repo::BranchName;
+
+    use super::*;
+    use crate::git::Layout;
+    use crate::testing::Fixture;
+
+    fn branch(name: &str) -> BranchName {
+        name.parse().expect("branch")
+    }
+
+    #[tokio::test]
+    async fn local_branches_move_only_as_their_lease_expects() {
+        let dir = tempfile::tempdir().expect("dir");
+        let fixture = Fixture::new(dir.path());
+        let first = fixture.commit("first", &[("a", Some("a"))]);
+        let second = fixture.commit("second", &[("a", Some("b"))]);
+        fixture.git(&["checkout", "--quiet", "-B", "side", first.as_str()]);
+        let side = fixture.commit("side", &[("s", Some("s"))]);
+        let repository = Git::isolated()
+            .init(dir.path().join("copy.git"), Layout::Bare, None)
+            .await
+            .expect("init");
+        let origin = Endpoint::url(fixture.origin().display().to_string().parse().expect("url"));
+        let all =
+            Refspec::new(RefName::head()).to("refs/igloo/all".parse::<RefName>().expect("ref"));
+        repository
+            .fetch(&origin, &[all], None)
+            .await
+            .expect("fetch");
+        for commit in [&first, &second, &side] {
+            let refspec = Refspec::new(commit.clone()).to(format!("refs/igloo/{commit}")
+                .parse::<RefName>()
+                .expect("ref"));
+            repository
+                .fetch(&origin, &[refspec], None)
+                .await
+                .expect("fetch");
+        }
+        let main = branch("main");
+        let name = RefName::from(&main);
+        let resolve = || repository.resolve(&name);
+
+        repository
+            .update_branch(&main, &first, &Lease::Absent)
+            .await
+            .expect("create");
+        assert_eq!(resolve().await.expect("resolve"), Some(first.clone()));
+        let stale = repository
+            .update_branch(&main, &second, &Lease::Absent)
+            .await;
+        assert!(
+            matches!(stale, Err(GitError::Rejected(PushRejection::Stale))),
+            "{stale:?}"
+        );
+        let wrong = repository
+            .update_branch(&main, &second, &Lease::At(second.clone()))
+            .await;
+        assert!(
+            matches!(wrong, Err(GitError::Rejected(PushRejection::Stale))),
+            "{wrong:?}"
+        );
+        repository
+            .update_branch(&main, &second, &Lease::FastForward)
+            .await
+            .expect("fast-forward");
+        let backwards = repository
+            .update_branch(&main, &first, &Lease::FastForward)
+            .await;
+        assert!(
+            matches!(
+                backwards,
+                Err(GitError::Rejected(PushRejection::NotFastForward))
+            ),
+            "{backwards:?}"
+        );
+        repository
+            .update_branch(&main, &second, &Lease::Absent)
+            .await
+            .expect("a branch already there is left as it is");
+        repository
+            .update_branch(&main, &first, &Lease::At(second.clone()))
+            .await
+            .expect("expected head");
+        repository
+            .update_branch(&main, &side, &Lease::Any)
+            .await
+            .expect("force");
+        assert_eq!(resolve().await.expect("resolve"), Some(side.clone()));
+
+        let moved = repository.remove_branch(&main, &first).await;
+        assert!(
+            matches!(moved, Err(GitError::Rejected(PushRejection::Stale))),
+            "{moved:?}"
+        );
+        repository
+            .remove_branch(&main, &side)
+            .await
+            .expect("remove");
+        assert_eq!(resolve().await.expect("resolve"), None);
+        let gone = repository.remove_branch(&main, &side).await;
+        assert!(
+            matches!(gone, Err(GitError::Rejected(PushRejection::Stale))),
+            "{gone:?}"
+        );
+
+        repository.set_head(&branch("trunk")).await.expect("head");
+        assert_eq!(
+            repository.head().await.expect("head"),
+            Head::Branch {
+                name: branch("trunk"),
+                commit: None
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn lists_local_branches_with_their_heads() {
+        let dir = tempfile::tempdir().expect("dir");
+        let fixture = Fixture::new(dir.path());
+        let first = fixture.commit("first", &[("a", Some("a"))]);
+        fixture.switch("topic/x");
+        let second = fixture.commit("second", &[("a", Some("b"))]);
+        let repository = Git::isolated()
+            .open(fixture.origin().to_path_buf())
+            .await
+            .expect("open");
+        assert_eq!(
+            repository.branches().await.expect("branches"),
+            vec![(branch("main"), first), (branch("topic/x"), second)]
+        );
     }
 }

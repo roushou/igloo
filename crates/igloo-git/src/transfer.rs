@@ -21,11 +21,13 @@ pub enum Endpoint {
     Bundle(PathBuf),
 }
 
-/// What a push expects of the branch it updates on the remote.
+/// What an update expects of the branch it moves, on a remote or in the repository itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lease {
     /// Anything: the branch is overwritten.
     Any,
+    /// The branch does not exist, or is an ancestor of the commit it moves to.
+    FastForward,
     /// The branch does not exist yet.
     Absent,
     /// The branch is at this commit.

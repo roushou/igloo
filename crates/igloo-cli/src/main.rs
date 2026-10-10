@@ -11,6 +11,7 @@ use clap::Parser;
 use igloo::{Client, Error};
 
 use commands::Command;
+use commands::git_credential::GitCredential;
 use error::CliError;
 
 mod commands;
@@ -41,14 +42,28 @@ struct Cli {
     #[arg(long, env = "IGLOO_TOKEN", hide_env_values = true, global = true)]
     token: Option<String>,
     #[command(subcommand)]
-    command: Command,
+    command: Invocation,
+}
+
+/// What the CLI is asked to do.
+#[derive(clap::Subcommand)]
+enum Invocation {
+    /// Answers git's credential requests for Igloo's git endpoint with the API token.
+    GitCredential(GitCredential),
+    #[command(flatten)]
+    Api(Command),
 }
 
 impl Cli {
     async fn execute(self) -> Result<ExitCode, CliError> {
         let token = self.token.unwrap_or_default();
-        let client = Client::new(&self.api, token)?;
-        self.command.execute(&client).await
+        match self.command {
+            Invocation::GitCredential(helper) => helper.execute(&self.api, &token),
+            Invocation::Api(command) => {
+                let client = Client::new(&self.api, token)?;
+                command.execute(&client).await
+            }
+        }
     }
 }
 

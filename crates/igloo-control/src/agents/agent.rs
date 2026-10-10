@@ -332,7 +332,7 @@ impl Agent {
         .await
     }
 
-    /// Pushes the commits `job` collected to the task's branch and records them as the next
+    /// Advances the task's branch in Igloo's copy to the commits `job` collected and records them as the next
     /// revision of the task's change, opening it on the first. A turn without commits fails
     /// the task.
     async fn publish(&self, task: &Task, job: JobId) -> Result<(), AppError> {
@@ -359,11 +359,10 @@ impl Agent {
                 AppError::Validation(ValidationErrors::single("branch", error.to_string()))
             },
         )?;
-        let remote = self.repos.remote(&repo).await?;
         self.forge
-            .push(&remote, &head, &branch, Expected::Any)
+            .advance(repo.id(), &branch, &head, Expected::Any)
             .await?;
-        let heads = self.heads.of(&repo, &branch).await?;
+        let heads = self.heads.held(&repo, &branch).await?;
         let change = match task.change() {
             Some(change) => {
                 self.dispatch(ReviseChange { change, heads }).await?;

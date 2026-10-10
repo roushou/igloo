@@ -475,10 +475,20 @@ stored as repository secrets) and translates its output into transcript events. 
 a harness still runs as a plain command, with its raw output as transcript.
 `.igloo/agents.toml` names the repository's default tool; a task may choose another.
 
-**Changes and git.** The forge (GitHub first) is the git host and nothing more: Igloo fetches
-commits, pushes revision branches and pushes merges. A merge lands one squashed commit on the
-target branch, holding the judged revision's tree, with the commits' trailers and an
-`Igloo-Change` trailer. Review, checks and merge decisions live in Igloo. `igloo change checkout <id>` fetches a change locally as a branch.
+**Changes and git.** Igloo hosts git (ADR 0013). Its copy of each repository is authoritative and
+is served over git's smart HTTP protocol at `/git/<repository id>.git` by `git http-backend`
+(`inbound/git.rs`), authenticated with the API token as a bearer token or as the password of HTTP
+Basic. A push to a branch other than the default updates the copy and opens a change titled with
+the head commit's subject, or records a revision of the branch's open change; a push to the
+default branch is refused, since it moves only by merge. A merge lands one squashed commit on the
+target branch of the copy, holding the judged revision's tree, with the commits' trailers and an
+`Igloo-Change` trailer. The forge (GitHub first) is a mirror: Igloo creates its copy when a
+repository is registered, pushes the default branch after every merge and every
+`IGLOO_MIRROR_INTERVAL_SECONDS`, mirrors the branch of an open change, and deletes the branch of a
+change that ended. The default branch reaches the forge only as a fast-forward, and a forge that
+is ahead of the copy is fetched into it. Review, checks and merge decisions live in Igloo.
+`igloo change checkout <id>` fetches a change locally as a branch. `igloo git-credential` is a git
+credential helper that answers with the API token for Igloo's own host only.
 
 ## 13. Agents and autonomy
 

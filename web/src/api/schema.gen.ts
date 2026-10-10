@@ -1250,6 +1250,11 @@ export interface components {
         RepoResource: {
             /** @description The branch changes merge into. */
             default_branch: string;
+            /**
+             * @description Where Igloo serves the repository over git, relative to the API: `/git/<id>.git`. Clone
+             *     and push there with the API token as the password.
+             */
+            git_path?: string;
             /** @description Its id (`repo_...`). */
             id: string;
             /** @description Where it is hosted. */

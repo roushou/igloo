@@ -129,6 +129,29 @@ impl Origin {
         self.fixture.head(branch).to_string()
     }
 
+    /// Waits until the origin has `branch` at `commit`, which Igloo mirrors after the fact.
+    pub(crate) async fn reaches(&self, branch: &str, commit: &str) {
+        for _ in 0..100 {
+            let reference = format!("refs/heads/{branch}");
+            let output = std::process::Command::new("git")
+                .args([
+                    "-C",
+                    &self.path,
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &reference,
+                ])
+                .output()
+                .expect("git");
+            if String::from_utf8_lossy(&output.stdout).trim() == commit {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the origin's {branch} never reached {commit}");
+    }
+
     /// Creates and switches to `branch`.
     pub(crate) fn branch(&self, branch: &str) {
         self.fixture.git(&["checkout", "--quiet", "-b", branch]);

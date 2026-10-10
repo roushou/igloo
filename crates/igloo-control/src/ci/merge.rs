@@ -140,10 +140,10 @@ impl Merger {
         let squash = self.squash(change, revision, &position.target).await?;
         match self
             .forge
-            .push(
-                &remote,
-                &squash,
+            .advance(
+                change.repo(),
                 change.target(),
+                &squash,
                 Expected::At(position.target),
             )
             .await

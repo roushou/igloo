@@ -13,6 +13,15 @@ use igloo_git::{
 
 use crate::ports::{ChangedFile, Expected, FileStatus, Forge, ForgeError, Remote};
 
+/// Whose head a fetch keeps when the copy and the forge disagree about a branch.
+#[derive(Clone, Copy)]
+enum Precedence {
+    /// The copy keeps its head unless the forge's descends from it.
+    Copy,
+    /// The forge's head replaces the copy's.
+    Forge,
+}
+
 /// Forges reached with the `git` binary in an isolated environment: GitHub over HTTPS with a
 /// token, or a repository on the server's file system. Each repository has a bare mirror under
 /// `root`; operations that change a mirror run one at a time.
@@ -27,6 +36,8 @@ pub struct GitForge {
 impl GitForge {
     /// The user GitHub expects with a token over HTTPS.
     const TOKEN_USER: &'static str = "x-access-token";
+    /// Where the forge's head of a fetched branch lands in the mirror.
+    const FETCHED: &'static str = "refs/igloo/fetched";
     /// Where an imported bundle's `HEAD` lands in the mirror.
     const IMPORTED: &'static str = "refs/igloo/imported";
     /// Lets shallow checkouts fetch commits by id rather than by branch.
@@ -119,8 +130,62 @@ impl GitForge {
             .collect())
     }
 
+    /// Fetches `branch` and settles which head the copy keeps.
+    async fn bring(
+        &self,
+        remote: &Remote,
+        branch: &BranchName,
+        precedence: Precedence,
+    ) -> Result<CommitId, ForgeError> {
+        let lock = self.lock(remote.repo);
+        let _guard = lock.lock().await;
+        let mirror = self.ensure_mirror(remote).await?;
+        let fetched: RefName = Self::FETCHED.parse().map_err(Self::io)?;
+        let refspec = Refspec::new(branch).to(fetched.clone()).forced();
+        let ours = mirror.resolve(&RefName::from(branch)).await?;
+        match mirror
+            .fetch(&Self::endpoint(remote), &[refspec], None)
+            .await
+        {
+            Err(GitError::RemoteRefNotFound) => {
+                return ours.ok_or_else(|| ForgeError::BranchNotFound(branch.clone()));
+            }
+            fetched => fetched?,
+        }
+        let theirs = mirror
+            .resolve(&fetched)
+            .await?
+            .ok_or_else(|| ForgeError::BranchNotFound(branch.clone()))?;
+        // Under `Precedence::Copy` a branch that is not an ancestor of the forge's is ahead of it
+        // or has diverged, and stays as it is.
+        let lease = match precedence {
+            Precedence::Copy => Lease::FastForward,
+            Precedence::Forge => Lease::Any,
+        };
+        match mirror.update_branch(branch, &theirs, &lease).await {
+            Ok(())
+            | Err(GitError::Rejected(PushRejection::NotFastForward | PushRejection::Stale)) => {}
+            Err(error) => return Err(error.into()),
+        }
+        mirror
+            .resolve(&RefName::from(branch))
+            .await?
+            .ok_or_else(|| ForgeError::BranchNotFound(branch.clone()))
+    }
+
     fn io(error: impl std::fmt::Display) -> ForgeError {
         ForgeError::Git(error.to_string())
+    }
+}
+
+impl From<Expected> for Lease {
+    fn from(expected: Expected) -> Self {
+        match expected {
+            Expected::Any => Self::Any,
+            Expected::FastForward => Self::FastForward,
+            Expected::Absent => Self::Absent,
+            Expected::At(current) => Self::At(current),
+        }
     }
 }
 
@@ -165,23 +230,67 @@ impl From<GitError> for ForgeError {
 #[async_trait]
 impl Forge for GitForge {
     async fn fetch(&self, remote: &Remote, branch: &BranchName) -> Result<CommitId, ForgeError> {
-        let lock = self.lock(remote.repo);
+        self.bring(remote, branch, Precedence::Copy).await
+    }
+
+    async fn adopt(&self, remote: &Remote, branch: &BranchName) -> Result<CommitId, ForgeError> {
+        self.bring(remote, branch, Precedence::Forge).await
+    }
+
+    async fn branches(&self, repo: RepoId) -> Result<Vec<(BranchName, CommitId)>, ForgeError> {
+        match self.git.open(self.mirror(repo)).await {
+            Ok(mirror) => Ok(mirror.branches().await?),
+            Err(GitError::NotARepository(_)) => Ok(Vec::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn advance(
+        &self,
+        repo: RepoId,
+        branch: &BranchName,
+        commit: &CommitId,
+        expected: Expected,
+    ) -> Result<(), ForgeError> {
+        let lock = self.lock(repo);
         let _guard = lock.lock().await;
-        let mirror = self.ensure_mirror(remote).await?;
-        let refspec = Refspec::new(branch).to(branch).forced();
+        let mirror = self.holding(repo, &[commit]).await?;
         match mirror
-            .fetch(&Self::endpoint(remote), &[refspec], None)
+            .update_branch(branch, commit, &Lease::from(expected))
             .await
         {
-            Err(GitError::RemoteRefNotFound) => {
-                return Err(ForgeError::BranchNotFound(branch.clone()));
+            Ok(()) => Ok(()),
+            Err(GitError::Rejected(PushRejection::Stale | PushRejection::NotFastForward)) => {
+                Err(ForgeError::Moved(branch.clone()))
             }
-            fetched => fetched?,
+            Err(error) => Err(error.into()),
         }
-        mirror
-            .resolve(&RefName::from(branch))
-            .await?
-            .ok_or_else(|| ForgeError::BranchNotFound(branch.clone()))
+    }
+
+    async fn remove(
+        &self,
+        repo: RepoId,
+        branch: &BranchName,
+        at: &CommitId,
+    ) -> Result<(), ForgeError> {
+        let lock = self.lock(repo);
+        let _guard = lock.lock().await;
+        let mirror = match self.git.open(self.mirror(repo)).await {
+            Ok(mirror) => mirror,
+            Err(GitError::NotARepository(_)) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        match mirror.remove_branch(branch, at).await {
+            Ok(()) => Ok(()),
+            // Git words "already gone" and "moved" alike; the branch tells them apart.
+            Err(GitError::Rejected(PushRejection::Stale)) => {
+                match mirror.resolve(&RefName::from(branch)).await? {
+                    None => Ok(()),
+                    Some(_) => Err(ForgeError::Moved(branch.clone())),
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     async fn delete(
@@ -368,13 +477,13 @@ impl Forge for GitForge {
         if !mirror.contains(commit).await? {
             return Err(ForgeError::CommitNotFound(commit.clone()));
         }
-        let lease = match expected {
-            Expected::Any => Lease::Any,
-            Expected::Absent => Lease::Absent,
-            Expected::At(current) => Lease::At(current),
-        };
         match mirror
-            .push(&Self::endpoint(remote), commit, branch, &lease)
+            .push(
+                &Self::endpoint(remote),
+                commit,
+                branch,
+                &Lease::from(expected),
+            )
             .await
         {
             Ok(()) => Ok(()),

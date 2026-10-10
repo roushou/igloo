@@ -557,6 +557,186 @@ impl ForgeConformance {
         self.squashes().await;
         self.diffs().await;
         self.deletes().await;
+        self.hosting().await;
+        self.precedence().await;
+    }
+
+    /// Igloo's copy is authoritative: a fetch never moves a branch of it backwards or sideways,
+    /// branches the forge lacks live in the copy, and the copy reaches the forge by pushes that
+    /// may be limited to fast-forwards.
+    async fn hosting(&self) {
+        let (main, repo) = (Self::branch("main"), self.remote.repo);
+        let base = self.origin.commit("hosting base", &[("hosted", Some("0"))]);
+        let head = self.origin.commit("hosting head", &[("hosted", Some("1"))]);
+        assert_eq!(
+            self.forge.fetch(&self.remote, &main).await.expect("fetch"),
+            head
+        );
+        self.push(&base, &main, Expected::Any)
+            .await
+            .expect("move the forge behind the copy");
+        assert_eq!(
+            self.forge.fetch(&self.remote, &main).await.expect("fetch"),
+            head,
+            "a branch of the copy that is ahead of the forge stays"
+        );
+        self.push(&head, &main, Expected::FastForward)
+            .await
+            .expect("fast-forward the forge");
+        assert_eq!(self.origin.head("main"), head);
+        let behind = self.push(&base, &main, Expected::FastForward).await;
+        assert!(matches!(behind, Err(ForgeError::Moved(_))), "{behind:?}");
+
+        let hosted = Self::branch("igloo/hosted");
+        self.advance(&hosted, &base, Expected::Absent)
+            .await
+            .expect("create");
+        let exists = self.advance(&hosted, &head, Expected::Absent).await;
+        assert!(matches!(exists, Err(ForgeError::Moved(_))), "{exists:?}");
+        let wrong = self
+            .advance(&hosted, &head, Expected::At(head.clone()))
+            .await;
+        assert!(matches!(wrong, Err(ForgeError::Moved(_))), "{wrong:?}");
+        self.advance(&hosted, &head, Expected::FastForward)
+            .await
+            .expect("forward");
+        let backwards = self.advance(&hosted, &base, Expected::FastForward).await;
+        assert!(
+            matches!(backwards, Err(ForgeError::Moved(_))),
+            "{backwards:?}"
+        );
+        self.advance(&hosted, &head, Expected::Absent)
+            .await
+            .expect("a branch already at the commit is left as it is");
+        let unknown: CommitId = "2".repeat(40).parse().expect("commit");
+        let missing = self.advance(&hosted, &unknown, Expected::Any).await;
+        assert!(
+            matches!(missing, Err(ForgeError::CommitNotFound(_))),
+            "{missing:?}"
+        );
+        assert_eq!(
+            self.forge.mirrored(repo, &hosted).await.expect("mirrored"),
+            Some(head.clone())
+        );
+        assert!(
+            self.forge
+                .branches(repo)
+                .await
+                .expect("branches")
+                .contains(&(hosted.clone(), head.clone())),
+            "the copy lists its branches"
+        );
+        assert_eq!(
+            self.forge
+                .fetch(&self.remote, &hosted)
+                .await
+                .expect("fetch"),
+            head,
+            "a branch only the copy has is not missing"
+        );
+
+        self.push(&head, &hosted, Expected::FastForward)
+            .await
+            .expect("create on the forge");
+        assert_eq!(self.origin.head("igloo/hosted"), head);
+        self.push(&head, &hosted, Expected::FastForward)
+            .await
+            .expect("pushing the commit a branch is at changes nothing");
+        self.removal(&hosted, &base, &head).await;
+    }
+
+    /// A fetch keeps a copy that is ahead of or diverged from the forge, as the default branch
+    /// needs; an adoption takes the forge's head, as a change branch revised from the forge
+    /// needs. Either keeps a branch only the copy has.
+    async fn precedence(&self) {
+        let (repo, kept) = (self.remote.repo, Self::branch("igloo/precedence"));
+        let previous = self.origin.git(&["rev-parse", "--abbrev-ref", "HEAD"]);
+        self.origin.switch("igloo/precedence");
+        let forges = self
+            .origin
+            .commit("forge's", &[("precedence", Some("forge"))]);
+        self.origin
+            .git(&["checkout", "--quiet", "-B", "igloo/copys", "HEAD~1"]);
+        let copys = self
+            .origin
+            .commit("copy's", &[("precedence", Some("copy"))]);
+        self.origin.git(&["checkout", "--quiet", &previous]);
+        self.forge
+            .fetch(&self.remote, &Self::branch("igloo/copys"))
+            .await
+            .expect("fetch");
+        self.advance(&kept, &copys, Expected::Any)
+            .await
+            .expect("a copy that diverged from the forge");
+
+        assert_eq!(
+            self.forge.fetch(&self.remote, &kept).await.expect("fetch"),
+            copys,
+            "a fetch keeps a diverged copy"
+        );
+        assert_eq!(
+            self.forge.adopt(&self.remote, &kept).await.expect("adopt"),
+            forges,
+            "an adoption takes the forge's head"
+        );
+        assert_eq!(
+            self.forge.mirrored(repo, &kept).await.expect("mirrored"),
+            Some(forges.clone())
+        );
+
+        let only = Self::branch("igloo/only-copy");
+        self.advance(&only, &copys, Expected::Any)
+            .await
+            .expect("create");
+        assert_eq!(
+            self.forge.adopt(&self.remote, &only).await.expect("adopt"),
+            copys,
+            "a branch only the copy has is kept"
+        );
+        let missing = self
+            .forge
+            .adopt(&self.remote, &Self::branch("igloo/nowhere"))
+            .await;
+        assert!(
+            matches!(missing, Err(ForgeError::BranchNotFound(_))),
+            "{missing:?}"
+        );
+    }
+
+    /// A branch of the copy is removed only while it is where the caller saw it.
+    async fn removal(&self, hosted: &BranchName, base: &CommitId, head: &CommitId) {
+        let repo = self.remote.repo;
+        let moved = self.forge.remove(repo, hosted, base).await;
+        assert!(matches!(moved, Err(ForgeError::Moved(_))), "{moved:?}");
+        self.forge.remove(repo, hosted, head).await.expect("remove");
+        self.forge
+            .remove(repo, hosted, head)
+            .await
+            .expect("removing a removed branch succeeds");
+        assert_eq!(
+            self.forge.mirrored(repo, hosted).await.expect("mirrored"),
+            None
+        );
+        assert!(
+            !self
+                .forge
+                .branches(repo)
+                .await
+                .expect("branches")
+                .iter()
+                .any(|(branch, _)| branch == hosted),
+            "a removed branch is not listed"
+        );
+        let unfetched = Id::from_uuid(Uuid::from_u128(2));
+        assert_eq!(
+            self.forge.branches(unfetched).await.expect("branches"),
+            vec![],
+            "a repository without a copy has no branch"
+        );
+        self.forge
+            .remove(unfetched, hosted, head)
+            .await
+            .expect("a repository without a copy has no branch");
     }
 
     /// A branch is deleted only while it is where the caller saw it; deleting it again succeeds.
@@ -870,6 +1050,17 @@ impl ForgeConformance {
             matches!(missing, Err(ForgeError::CommitNotFound(_))),
             "{missing:?}"
         );
+    }
+
+    async fn advance(
+        &self,
+        branch: &BranchName,
+        commit: &CommitId,
+        expected: Expected,
+    ) -> Result<(), ForgeError> {
+        self.forge
+            .advance(self.remote.repo, branch, commit, expected)
+            .await
     }
 
     async fn push(

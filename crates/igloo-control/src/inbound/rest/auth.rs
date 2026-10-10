@@ -34,6 +34,19 @@ impl DevToken {
         let presented = header?.strip_prefix("Bearer ")?;
         (presented == &*self.token).then_some(self.actor)
     }
+
+    /// The actor a git client stands for: a bearer token, or HTTP Basic with the token as the
+    /// password and any user name, which is what git sends.
+    pub(in crate::inbound) fn authenticate_git(&self, header: Option<&str>) -> Option<Actor> {
+        let header = header?;
+        if header.starts_with("Bearer ") {
+            return self.authenticate(Some(header));
+        }
+        let credentials = Base64::decode(header.strip_prefix("Basic ")?.trim())?;
+        let text = String::from_utf8(credentials).ok()?;
+        let (_, password) = text.split_once(':')?;
+        (password == &*self.token).then_some(self.actor)
+    }
 }
 
 /// The authenticated caller of a request, as a command context.
@@ -187,5 +200,42 @@ impl TerminalCaller {
         });
         Caller::authenticated(parts, state, authorization.as_deref())
             .map(|Caller(context)| Self(context))
+    }
+}
+
+/// Standard base64, as HTTP Basic credentials carry it.
+struct Base64;
+
+impl Base64 {
+    /// The bytes `text` encodes; `None` when it is not valid base64 (padding is optional).
+    fn decode(text: &str) -> Option<Vec<u8>> {
+        let digits = text.trim_end_matches('=');
+        let mut bytes = Vec::with_capacity(digits.len() * 3 / 4);
+        let mut block = 0u32;
+        let mut filled = 0;
+        for digit in digits.bytes() {
+            let sextet = match digit {
+                b'A'..=b'Z' => digit - b'A',
+                b'a'..=b'z' => digit - b'a' + 26,
+                b'0'..=b'9' => digit - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                _ => return None,
+            };
+            block = (block << 6) | u32::from(sextet);
+            filled += 1;
+            if filled == 4 {
+                bytes.extend(&block.to_be_bytes()[1..]);
+                block = 0;
+                filled = 0;
+            }
+        }
+        match filled {
+            0 => {}
+            2 => bytes.extend(&(block >> 4).to_be_bytes()[3..]),
+            3 => bytes.extend(&(block >> 2).to_be_bytes()[2..]),
+            _ => return None,
+        }
+        Some(bytes)
     }
 }

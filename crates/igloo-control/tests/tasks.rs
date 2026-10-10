@@ -195,7 +195,13 @@ async fn a_review_sends_the_task_back_and_a_merge_finishes_it() {
         .approve_change(&change)
         .await
         .expect("a human approves");
-    client.merge_change(&change).await.expect("merge");
+    let merged = client.merge_change(&change).await.expect("merge");
+    origin
+        .reaches(
+            "main",
+            merged.merged_commit.as_deref().expect("merged commit"),
+        )
+        .await;
     let main = origin.head("main");
     let tree = |commit: &str| {
         origin.git(&[
@@ -250,8 +256,8 @@ async fn revised(client: &Client, origin: &Origin, task: &TaskResource, goal: &s
     assert_eq!(change.source_branch, branch);
     assert_eq!(change.title, goal);
     assert_eq!(change.revisions.len(), 1);
-    let head = origin.head(&branch);
-    assert_eq!(change.revisions[0].head, head);
+    let head = change.revisions[0].head.clone();
+    origin.reaches(&branch, &head).await;
     assert_eq!(
         origin.git(&[
             "--git-dir",

@@ -22,6 +22,7 @@ whether it embeds a worker.
 | `IGLOO_DATA_DIR`                | the user's data directory, see below | Blobs, repository mirrors, image downloads, the embedded worker's state.                         |
 | `IGLOO_PUBLIC_URL`              | `http://` and the bound REST address | The REST URL as workers reach it, for blob downloads.                                            |
 | `IGLOO_LEASE_TTL_SECONDS`       | `30`                                 | How long a job lease lasts without a heartbeat. 1 to 3600.                                       |
+| `IGLOO_MIRROR_INTERVAL_SECONDS` | `900`                                | How often each default branch is pushed to its forge. 10 to 86400.                               |
 | `IGLOO_COMMAND_TIMEOUT_SECONDS` | `10`                                 | How long one command may take. 1 to 300.                                                         |
 | `IGLOO_LOG_FORMAT`              | `pretty`                             | `pretty` or `json`.                                                                              |
 | `IGLOO_EMBEDDED_WORKER`         | `false`                              | Runs an unisolated worker in the server process. Development only.                               |

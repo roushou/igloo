@@ -158,11 +158,35 @@ impl ChangeHeads {
         Self { repos, forge }
     }
 
-    /// Fetches `source` and `repo`'s default branch; returns `source`'s head and its merge base
+    /// Reads `source` and `repo`'s default branch from Igloo's copy, without reaching the forge;
+    /// returns `source`'s head and its merge base with the default branch.
+    pub async fn held(&self, repo: &Repo, source: &BranchName) -> Result<Heads, AppError> {
+        let missing =
+            |branch: &BranchName| AppError::from(ForgeError::BranchNotFound(branch.clone()));
+        let head = self
+            .forge
+            .mirrored(repo.id(), source)
+            .await?
+            .ok_or_else(|| missing(source))?;
+        let target = self
+            .forge
+            .mirrored(repo.id(), repo.default_branch())
+            .await?
+            .ok_or_else(|| missing(repo.default_branch()))?;
+        let base = self
+            .forge
+            .merge_base(repo.id(), &head, &target)
+            .await?
+            .ok_or_else(|| AppError::domain(&ChangeHeadError::Unrelated))?;
+        Ok(Heads { head, base })
+    }
+
+    /// Adopts the forge's `source`, which it is the source of, and fetches `repo`'s default
+    /// branch, which Igloo's copy wins; returns `source`'s head and its merge base
     /// with the default branch.
     pub async fn of(&self, repo: &Repo, source: &BranchName) -> Result<Heads, AppError> {
         let remote = self.repos.remote(repo).await?;
-        let head = self.forge.fetch(&remote, source).await?;
+        let head = self.forge.adopt(&remote, source).await?;
         let target = self.forge.fetch(&remote, repo.default_branch()).await?;
         let base = self
             .forge
@@ -389,8 +413,8 @@ impl Extension for ChangeModule {
     }
 }
 
-/// Deletes the source branch of a change once it merged or closed, provided the branch is
-/// still at the change's latest revision. The target branch and the repository's default
+/// Deletes the source branch of a change, from Igloo's copy and from the forge, once it merged or
+/// closed, provided the branch is still at the change's latest revision. The target branch and the repository's default
 /// branch are never deleted, and a branch moved since is left as it is.
 pub(crate) struct DeleteEndedBranches {
     changes: ChangeQueries,
@@ -426,12 +450,13 @@ impl Reactor for DeleteEndedBranches {
         if source == change.target() || source == repo.default_branch() {
             return Ok(());
         }
+        let head = &change.latest().head;
         let remote = self.repos.remote(&repo).await?;
-        match self
-            .forge
-            .delete(&remote, source, &change.latest().head)
-            .await
-        {
+        let deleted = match self.forge.remove(repo.id(), source, head).await {
+            Ok(()) => self.forge.delete(&remote, source, head).await,
+            Err(error) => Err(error),
+        };
+        match deleted {
             Ok(()) => Ok(()),
             Err(ForgeError::Moved(_)) => {
                 info!(change = %id, branch = %source, "kept a branch that moved after its change ended");

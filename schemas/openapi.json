@@ -3547,6 +3547,10 @@
             "type": "string",
             "description": "The branch changes merge into."
           },
+          "git_path": {
+            "type": "string",
+            "description": "Where Igloo serves the repository over git, relative to the API: `/git/<id>.git`. Clone\nand push there with the API token as the password."
+          },
           "id": {
             "type": "string",
             "description": "Its id (`repo_...`)."

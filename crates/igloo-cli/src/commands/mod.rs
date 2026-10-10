@@ -8,6 +8,7 @@ use igloo::Client;
 use crate::error::CliError;
 
 pub(crate) mod change;
+pub(crate) mod git_credential;
 mod logs;
 mod repo;
 mod run;

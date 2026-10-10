@@ -14,7 +14,7 @@ testing = []
 [dependencies]
 igloo-core.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "process", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "process", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]

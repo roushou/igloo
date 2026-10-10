@@ -277,12 +277,9 @@ async fn a_change_merges_once_its_checks_pass_and_protected_paths_are_approved()
     client.approve_change(&change.id).await.expect("approve");
     let merged = client.merge_change(&change.id).await.expect("merge");
     assert_eq!(merged.phase, ChangePhase::Merged);
+    let merged_commit = merged.merged_commit.clone().expect("merged commit");
+    origin.reaches("main", &merged_commit).await;
     let main = origin.head("main");
-    assert_eq!(
-        merged.merged_commit.as_deref(),
-        Some(main.as_str()),
-        "Igloo pushed the target branch"
-    );
     let tree = |commit: &str| {
         origin.git(&[
             "-C",

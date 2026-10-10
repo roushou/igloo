@@ -14,7 +14,7 @@ use crate::inbound::{BlobSigningKey, WebConsole};
 
 /// Every variable the server reads. Any other `IGLOO_*` variable is an error, except the
 /// worker's and the CLI's.
-const VARIABLES: [&str; 14] = [
+const VARIABLES: [&str; 15] = [
     "IGLOO_DATABASE_URL",
     "IGLOO_DEV_TOKEN",
     "IGLOO_JOIN_TOKEN",
@@ -25,6 +25,7 @@ const VARIABLES: [&str; 14] = [
     "IGLOO_DATA_DIR",
     "IGLOO_PUBLIC_URL",
     "IGLOO_LEASE_TTL_SECONDS",
+    "IGLOO_MIRROR_INTERVAL_SECONDS",
     "IGLOO_COMMAND_TIMEOUT_SECONDS",
     "IGLOO_LOG_FORMAT",
     "IGLOO_EMBEDDED_WORKER",
@@ -43,6 +44,9 @@ const DEFAULT_GATEWAY_LISTEN: &str = "127.0.0.1:7001";
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a job lease lasts without a heartbeat when `IGLOO_LEASE_TTL_SECONDS` is unset.
 const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(30);
+/// How often the default branches are pushed to their forges when `IGLOO_MIRROR_INTERVAL_SECONDS`
+/// is unset.
+const DEFAULT_MIRROR_INTERVAL: Duration = Duration::from_mins(15);
 /// The user's data directory on macOS, relative to `HOME`.
 const MACOS_DATA_HOME: &str = "Library/Application Support";
 /// The user's data directory elsewhere, relative to `HOME`, when `XDG_DATA_HOME` is unset.
@@ -88,6 +92,7 @@ pub struct Config {
     pub(crate) public_url: Option<Url>,
     pub(crate) command_timeout: Duration,
     pub(crate) lease_ttl: Duration,
+    pub(crate) mirror_interval: Duration,
     pub(crate) log_format: LogFormat,
     pub(crate) embedded_worker: bool,
     pub(crate) web_dir: Option<PathBuf>,
@@ -136,16 +141,6 @@ impl Config {
             .path("IGLOO_DATA_DIR")
             .or_else(|| Self::user_data_dir(vars.os("HOME"), vars.os("XDG_DATA_HOME")))
             .ok_or("is required when HOME is unset");
-        let web_dir = vars.path("IGLOO_WEB_DIR").map_or(Ok(None), |dir| {
-            if WebConsole::check(&dir) {
-                Ok(Some(dir))
-            } else {
-                Err("must be a directory containing index.html")
-            }
-        });
-        let log_format = vars
-            .text("IGLOO_LOG_FORMAT")
-            .and_then(|format| format.map_or(Ok(LogFormat::default()), |format| format.parse()));
         let (
             (),
             listen,
@@ -159,6 +154,7 @@ impl Config {
             public_url,
             command_timeout,
             lease_ttl,
+            mirror_interval,
             log_format,
             embedded_worker,
             web_dir,
@@ -188,9 +184,17 @@ impl Config {
                 "IGLOO_LEASE_TTL_SECONDS",
                 vars.seconds("IGLOO_LEASE_TTL_SECONDS", DEFAULT_LEASE_TTL, 1..=3600),
             )
-            .field("IGLOO_LOG_FORMAT", log_format)
+            .field(
+                "IGLOO_MIRROR_INTERVAL_SECONDS",
+                vars.seconds(
+                    "IGLOO_MIRROR_INTERVAL_SECONDS",
+                    DEFAULT_MIRROR_INTERVAL,
+                    10..=86400,
+                ),
+            )
+            .field("IGLOO_LOG_FORMAT", vars.log_format())
             .field("IGLOO_EMBEDDED_WORKER", vars.flag("IGLOO_EMBEDDED_WORKER"))
-            .field("IGLOO_WEB_DIR", web_dir)
+            .field("IGLOO_WEB_DIR", vars.web_dir())
             .finish()?;
         Ok(Self {
             listen,
@@ -204,6 +208,7 @@ impl Config {
             public_url,
             command_timeout,
             lease_ttl,
+            mirror_interval,
             log_format,
             embedded_worker,
             web_dir,
@@ -313,6 +318,23 @@ impl Vars {
             .unwrap_or(default)
             .parse()
             .map_err(|_| "must be an address such as 127.0.0.1:7000")
+    }
+
+    /// The log format, or the default.
+    fn log_format(&self) -> Result<LogFormat, &'static str> {
+        self.text("IGLOO_LOG_FORMAT")
+            .and_then(|format| format.map_or(Ok(LogFormat::default()), |format| format.parse()))
+    }
+
+    /// The built web console directory, when configured.
+    fn web_dir(&self) -> Result<Option<PathBuf>, &'static str> {
+        self.path("IGLOO_WEB_DIR").map_or(Ok(None), |dir| {
+            if WebConsole::check(&dir) {
+                Ok(Some(dir))
+            } else {
+                Err("must be a directory containing index.html")
+            }
+        })
     }
 
     /// The value of `name` as whole seconds within `range`, or `default`.

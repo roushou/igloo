@@ -74,7 +74,7 @@ async fn changes_are_checked_merged_and_their_outcomes_recorded() {
         .expect("events");
     assert!(events.iter().all(|event| !event.contains(SECRET)));
 
-    // 3. Protected paths need a human approval; Igloo then pushes main.
+    // 3. Protected paths need a human approval; the merge reaches the forge's main.
     assert_eq!(
         refusal(client, &change.id).await,
         "change.approval_required"
@@ -82,6 +82,9 @@ async fn changes_are_checked_merged_and_their_outcomes_recorded() {
     client.approve_change(&change.id).await.expect("approve");
     let merged = client.merge_change(&change.id).await.expect("merge");
     assert_eq!(merged.phase, ChangePhase::Merged);
+    // The merge moves main in Igloo; Igloo then mirrors it to the forge.
+    let squashed = merged.merged_commit.clone().expect("merged commit");
+    origin.reaches("main", &squashed).await;
     // One squashed commit on the old main, holding the revision's tree and naming the change.
     let main = origin.head("main");
     origin.git(&["fetch", "--quiet", &origin.path, "main"]);

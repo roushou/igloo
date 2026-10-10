@@ -32,14 +32,14 @@ use crate::app::{
 };
 use crate::ci::{CiModule, Outcome, Run};
 use crate::config::Config;
-use crate::inbound::WebConsole;
 use crate::inbound::gateway::Gateway;
 use crate::inbound::mcp::Mcp;
 use crate::inbound::rest::{DevToken, RestApi};
 use crate::inbound::{BlobUrls, TerminalHub};
+use crate::inbound::{GitHttp, GitHttpError, WebConsole};
 use crate::platform::{
-    BuildModule, ChangeModule, JobModule, LayerCollector, RepoModule, SandboxModule, SealModule,
-    SnapshotModule, WorkerModule, WorkerUsages,
+    BuildModule, ChangeModule, ForgeMirror, JobModule, LayerCollector, MirrorModule, RepoModule,
+    SandboxModule, SealModule, SnapshotModule, WorkerModule, WorkerUsages,
 };
 use crate::ports::{IdGenerator, RegistryError, StorageError};
 use crate::workspaces::WorkspaceModule;
@@ -71,6 +71,9 @@ pub enum ServerError {
     /// The embedded worker could not be configured or started.
     #[error("embedded worker: {0}")]
     Worker(String),
+    /// The git endpoint could not be set up.
+    #[error(transparent)]
+    Git(#[from] GitHttpError),
 }
 
 impl Server {
@@ -121,6 +124,7 @@ impl Server {
         builder.install(SealModule)?;
         builder.install(RepoModule)?;
         builder.install(ChangeModule)?;
+        builder.install(MirrorModule)?;
         builder.install(BuildModule { settings })?;
         builder.install(CiModule { settings })?;
         builder.install(AgentsModule { settings })?;
@@ -169,22 +173,31 @@ impl Server {
             user: Id::from_uuid(Uuid::from_u128(Self::DEV_USER)),
         };
         let collector = LayerCollector::new(&builder, builder.bus())?;
-        let rest = RestApi::new(
+        let mirror = ForgeMirror::new(&builder)?;
+        let token = DevToken::new(config.dev_token.clone(), actor);
+        let git = GitHttp::new(
             &builder,
             builder.bus(),
-            DevToken::new(config.dev_token.clone(), actor),
-            blob_urls,
-        )?
-        .with_usages(usages)
-        .with_terminals(terminals)
-        .with_collector(collector.clone());
-        let api = Mcp::router(&rest).merge(rest.router());
+            token.clone(),
+            config.data_dir.join("repos"),
+            supervisor.spawner(),
+        )
+        .await?;
+        let rest = RestApi::new(&builder, builder.bus(), token, blob_urls)?
+            .with_usages(usages)
+            .with_terminals(terminals)
+            .with_collector(collector.clone());
+        let api = Mcp::router(&rest).merge(rest.router()).merge(git.router());
         let http = match &config.web_dir {
             Some(dir) => WebConsole::new(dir).mount(api),
             None => api,
         };
         let _bus = builder.build().start(&supervisor);
         supervisor.spawn("layer-collector", |cancel| collector.run(cancel));
+        let mirror_interval = config.mirror_interval;
+        supervisor.spawn("forge-mirror", move |cancel| {
+            mirror.run(mirror_interval, cancel)
+        });
 
         let server = Self {
             rest: rest_listener.local_addr()?,
