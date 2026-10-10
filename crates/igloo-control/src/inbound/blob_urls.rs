@@ -129,6 +129,11 @@ impl BlobUrls {
         self.check(BlobAccess::Upload, &seal.to_string(), signature)
     }
 
+    /// The base URL, key and clock URLs are minted with, for credentials of the same server.
+    pub(super) fn signing(&self) -> (Url, BlobSigningKey, Arc<dyn Clock>) {
+        (self.base.clone(), self.key.clone(), Arc::clone(&self.clock))
+    }
+
     fn check(
         &self,
         access: BlobAccess,
@@ -174,6 +179,14 @@ impl BlobSigningKey {
     /// The shortest secret accepted.
     pub const MIN_SECRET_BYTES: usize = 32;
     const CONTEXT: &'static str = "igloo blob urls v1";
+    const CREDENTIAL_CONTEXT: &'static str = "igloo workspace credentials v1";
+
+    /// A keyed hash of `subject` under a key derived for workspace credentials, so no blob URL
+    /// signature is a credential.
+    pub(super) fn credential_mac(&self, subject: &str) -> blake3::Hash {
+        let key = blake3::derive_key(Self::CREDENTIAL_CONTEXT, &self.0);
+        blake3::keyed_hash(&key, subject.as_bytes())
+    }
 
     fn mac(&self, access: BlobAccess, subject: &str, expires: i64) -> blake3::Hash {
         blake3::keyed_hash(

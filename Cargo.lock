@@ -1566,14 +1566,17 @@ name = "igloo-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "futures-util",
  "igloo-core",
  "igloo-git",
  "igloo-rs",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -1651,6 +1654,7 @@ name = "igloo-rs"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "futures-util",
  "igloo-api",
  "ignore",
  "reqwest",
@@ -1661,6 +1665,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

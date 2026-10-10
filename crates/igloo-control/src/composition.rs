@@ -13,6 +13,7 @@ use igloo_core::worker::Worker as WorkerEntity;
 use igloo_core::workspace::Workspace;
 use igloo_core::{Actor, Id, ValidationErrors};
 use igloo_worker::{Worker, WorkerConfig, WorkerError};
+use reqwest::Url;
 use tokio::net::TcpListener;
 use tonic::transport::Server as GrpcServer;
 use tonic::transport::server::TcpIncoming;
@@ -35,7 +36,7 @@ use crate::config::Config;
 use crate::inbound::gateway::Gateway;
 use crate::inbound::mcp::Mcp;
 use crate::inbound::rest::{DevToken, RestApi};
-use crate::inbound::{BlobUrls, TerminalHub};
+use crate::inbound::{BlobUrls, TerminalHub, WorkspaceCredentials};
 use crate::inbound::{GitHttp, GitHttpError, WebConsole};
 use crate::platform::{
     BuildModule, ChangeModule, ForgeMirror, JobModule, LayerCollector, MirrorModule, RepoModule,
@@ -85,6 +86,7 @@ impl Server {
         config: &Config,
         database: &PgDatabase,
         events: &Arc<PgEventLog>,
+        public_url: &Url,
     ) -> Result<PlatformBuilder, ServerError> {
         let ids: Arc<dyn IdGenerator> = Arc::new(UuidV7IdGenerator);
         let blobs = FsBlobStore::new(config.data_dir.join("blobs"), Arc::new(SystemClock)).await?;
@@ -128,7 +130,10 @@ impl Server {
         builder.install(BuildModule { settings })?;
         builder.install(CiModule { settings })?;
         builder.install(AgentsModule { settings })?;
-        builder.install(WorkspaceModule { settings })?;
+        builder.install(WorkspaceModule {
+            settings,
+            git_base: public_url.clone(),
+        })?;
 
         Ok(builder)
     }
@@ -137,8 +142,6 @@ impl Server {
     pub async fn start(config: &Config) -> Result<Self, ServerError> {
         let database = PgDatabase::connect(&config.database_url).await?;
         let events = PgEventLog::new(&database).await?;
-        let builder = Self::platform(config, &database, &events).await?;
-
         let rest_listener = TcpListener::bind(config.listen).await?;
         let gateway_listener = TcpListener::bind(config.gateway_listen).await?;
         let public_url = match &config.public_url {
@@ -147,6 +150,7 @@ impl Server {
                 .parse()
                 .map_err(std::io::Error::other)?,
         };
+        let builder = Self::platform(config, &database, &events, &public_url).await?;
         let blob_urls = BlobUrls::new(
             public_url,
             config.blob_key.clone(),
@@ -179,6 +183,7 @@ impl Server {
             &builder,
             builder.bus(),
             token.clone(),
+            WorkspaceCredentials::new(&blob_urls),
             config.data_dir.join("repos"),
             supervisor.spawner(),
         )

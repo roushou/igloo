@@ -21,7 +21,7 @@ use crate::platform::{
     StoreBlob, WarmRecipe, WorkerModule,
 };
 use crate::ports::{Forge, SecretValue};
-use crate::testing::{MemoryPlatform, MemoryStores, context};
+use crate::testing::{MemoryPlatform, MemoryStores, context, public_url};
 
 const PIPELINE: &str = "secrets = [\"TOKEN\"]\n\n[warm]\ncommand = \"make deps\"\nlockfiles = [\"deps.lock\"]\n\n\
                         [sandbox]\nnetwork = \"deny_all\"\n\n[[checks]]\nname = \"ok\"\nrun = \"true\"\n";
@@ -53,7 +53,10 @@ async fn start() -> Running {
     builder.install(SealModule).expect("seal");
     builder.install(RepoModule).expect("repo");
     builder
-        .install(WorkspaceModule { settings })
+        .install(WorkspaceModule {
+            settings,
+            git_base: public_url(),
+        })
         .expect("workspace");
     let forge = Arc::clone(&builder.ports().forge);
     let supervisor = TaskSupervisor::new();
@@ -573,5 +576,117 @@ async fn workspaces_of_one_branch_share_the_warm_snapshots_layers() {
             "built over the warm snapshot's layers"
         );
     }
+    running.stop().await;
+}
+
+impl Running {
+    /// The jobs that set up workspaces' sandboxes, with their environment.
+    async fn setup_jobs(&self) -> Vec<(SandboxId, std::collections::BTreeMap<String, String>)> {
+        let mut jobs = Vec::new();
+        for job in self.stores.jobs.all().await.expect("jobs") {
+            let spec = job.spec();
+            if !setup::WorkspaceSetup::is_setup(spec) {
+                continue;
+            }
+            let igloo_core::job::JobSpec::Execute { env, .. } = spec;
+            let env = env
+                .iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect();
+            jobs.push((spec.sandbox(), env));
+        }
+        jobs
+    }
+}
+
+#[tokio::test]
+async fn a_new_workspace_is_set_up_once_with_origin_at_igloo_and_the_repositorys_dotfiles() {
+    let running = start().await;
+    let dotfiles = igloo_core::dotfiles::Dotfiles::new(
+        "https://github.com/me/dotfiles",
+        "./install.sh --quiet",
+    )
+    .expect("dotfiles");
+    running
+        .bus
+        .dispatch(
+            crate::platform::SetDotfiles {
+                repo: running.repo,
+                dotfiles: Some(dotfiles),
+            },
+            context(),
+        )
+        .await
+        .expect("set dotfiles");
+    let (id, sandbox) = running.running().await;
+
+    eventually(async || !running.setup_jobs().await.is_empty()).await;
+    let jobs = running.setup_jobs().await;
+    assert_eq!(jobs.len(), 1);
+    let (job_sandbox, env) = &jobs[0];
+    assert_eq!(*job_sandbox, sandbox);
+    let origin = format!("http://igloo.test/git/{}.git", running.repo);
+    assert_eq!(env.get("IGLOO_GIT_URL"), Some(&origin));
+    assert_eq!(
+        env.get("IGLOO_WORKSPACE_BRANCH").map(String::as_str),
+        Some("main")
+    );
+    assert_eq!(
+        env.get("IGLOO_DOTFILES_REPOSITORY").map(String::as_str),
+        Some("https://github.com/me/dotfiles")
+    );
+    assert_eq!(
+        env.get("IGLOO_DOTFILES_INSTALL").map(String::as_str),
+        Some("./install.sh --quiet")
+    );
+    assert!(
+        env.keys().all(|name| !name.contains("TOKEN")),
+        "no credential goes into a job, which the event log records"
+    );
+
+    let sealed = running.stop_sealing(id, sandbox, b"my notes").await;
+    running
+        .bus
+        .dispatch(StartWorkspace { workspace: id }, person())
+        .await
+        .expect("start");
+    eventually(async || {
+        running
+            .workspace(id)
+            .await
+            .status()
+            .sandbox()
+            .is_some_and(|second| second != sandbox)
+    })
+    .await;
+    let second = running
+        .workspace(id)
+        .await
+        .status()
+        .sandbox()
+        .expect("sandbox");
+    assert_eq!(running.snapshot_of(second).await, sealed);
+    running.report(second, SandboxPhase::Running).await;
+    running.wait_for(id, WorkspacePhase::Running).await;
+    // The reactor handles the second run's event after the workspace records it.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        running.setup_jobs().await.len(),
+        1,
+        "resuming does not set up again"
+    );
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn a_repository_without_dotfiles_still_gets_its_origin_set() {
+    let running = start().await;
+    running.running().await;
+    eventually(async || !running.setup_jobs().await.is_empty()).await;
+    let jobs = running.setup_jobs().await;
+    let (_, env) = &jobs[0];
+    assert!(env.contains_key("IGLOO_GIT_URL"));
+    assert!(!env.contains_key("IGLOO_DOTFILES_REPOSITORY"));
+    assert!(!env.contains_key("IGLOO_DOTFILES_INSTALL"));
     running.stop().await;
 }

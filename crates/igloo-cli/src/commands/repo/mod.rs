@@ -8,6 +8,7 @@ use igloo::Client;
 use crate::error::CliError;
 
 mod add;
+mod dotfiles;
 mod list;
 mod snapshot;
 
@@ -24,6 +25,8 @@ enum RepoCommand {
     Add(add::Add),
     /// Lists repositories.
     List(list::List),
+    /// Manages the dotfiles installed once in each new workspace.
+    Dotfiles(dotfiles::Dotfiles),
     /// Snapshots a repository at a branch's head or a commit, with its checkout in
     /// `/workspace`.
     Snapshot(snapshot::Snapshot),
@@ -35,6 +38,7 @@ impl Repo {
         match self.command {
             RepoCommand::Add(command) => command.execute(client).await,
             RepoCommand::List(command) => command.execute(client).await,
+            RepoCommand::Dotfiles(command) => command.execute(client).await,
             RepoCommand::Snapshot(command) => command.execute(client).await,
         }
     }

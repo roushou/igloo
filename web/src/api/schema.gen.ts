@@ -304,6 +304,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/repos/{id}/dotfiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Sets the dotfiles new workspaces of the repository are set up with. */
+        put: operations["setRepoDotfiles"];
+        post?: never;
+        /** Clears the dotfiles of the repository. */
+        delete: operations["clearRepoDotfiles"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repos/{id}/runs": {
         parameters: {
             query?: never;
@@ -1018,6 +1036,19 @@ export interface components {
             revision: number;
         };
         /**
+         * @description The dotfiles new workspaces of a repository are set up with: the repository is cloned and
+         *     the install command run in the clone, once, when a workspace is created.
+         */
+        DotfilesResource: {
+            /**
+             * @description The shell command run in the clone; a failure is reported and does not fail the
+             *     workspace.
+             */
+            install: string;
+            /** @description The URL to clone: `https://`, `http://`, `ssh://` or `git@`. */
+            repository: string;
+        };
+        /**
          * @description What `GET /v1/events` sends as the `data` of each server-sent event: which resource changed
          *     and when, never the domain payload. Clients refetch the resource.
          */
@@ -1250,6 +1281,7 @@ export interface components {
         RepoResource: {
             /** @description The branch changes merge into. */
             default_branch: string;
+            dotfiles?: components["schemas"]["DotfilesResource"] | null;
             /**
              * @description Where Igloo serves the repository over git, relative to the API: `/git/<id>.git`. Clone
              *     and push there with the API token as the password.
@@ -2473,6 +2505,74 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setRepoDotfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DotfilesResource"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    clearRepoDotfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

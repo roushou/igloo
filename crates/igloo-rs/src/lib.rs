@@ -15,17 +15,21 @@
 //! # }
 //! ```
 //!
-//! Depends only on `igloo-api` and an HTTP client. Its public API is a stability promise: small,
+//! Depends only on `igloo-api`, an HTTP client and a WebSocket client. Its public API is a stability promise: small,
 //! documented, and free of CLI concerns.
 
 mod archive;
 mod client;
 mod logs;
 mod run;
+mod terminal;
+mod workspaces;
 
 pub use archive::Layer;
 pub use client::{Client, Error};
 pub use igloo_api::run as ci;
+pub use igloo_api::terminal::TerminalEndReason;
 pub use igloo_api::{change, job, problem, repo, sandbox, seal, snapshot, task, workspace};
 pub use logs::{LogEvent, LogStream, OutputStream};
 pub use run::{Run, Running};
+pub use terminal::{Terminal, TerminalEvent, TerminalExit, TerminalInput, TerminalOutput};

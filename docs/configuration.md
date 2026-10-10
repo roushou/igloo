@@ -20,7 +20,7 @@ whether it embeds a worker.
 | `IGLOO_LISTEN`                  | `127.0.0.1:7000`                     | REST, SSE and MCP address.                                                                       |
 | `IGLOO_GATEWAY_LISTEN`          | `127.0.0.1:7001`                     | Worker gateway (gRPC) address.                                                                   |
 | `IGLOO_DATA_DIR`                | the user's data directory, see below | Blobs, repository mirrors, image downloads, the embedded worker's state.                         |
-| `IGLOO_PUBLIC_URL`              | `http://` and the bound REST address | The REST URL as workers reach it, for blob downloads.                                            |
+| `IGLOO_PUBLIC_URL`              | `http://` and the bound REST address | The REST URL as workers and sandboxes reach it: blob downloads and workspaces' git origin.       |
 | `IGLOO_LEASE_TTL_SECONDS`       | `30`                                 | How long a job lease lasts without a heartbeat. 1 to 3600.                                       |
 | `IGLOO_MIRROR_INTERVAL_SECONDS` | `900`                                | How often each default branch is pushed to its forge. 10 to 86400.                               |
 | `IGLOO_COMMAND_TIMEOUT_SECONDS` | `10`                                 | How long one command may take. 1 to 300.                                                         |

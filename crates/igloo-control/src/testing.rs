@@ -153,13 +153,14 @@ pub(crate) const FIXTURE_IMAGE: &str = "registry.test/igloo/fixture:1";
 /// The secret test blob URLs are signed with.
 pub(crate) const BLOB_SECRET: &str = "test-secret-test-secret-test-secret";
 
+/// The public URL of the test server.
+pub(crate) fn public_url() -> reqwest::Url {
+    "http://igloo.test/".parse().expect("base")
+}
+
 /// Blob URLs under `http://igloo.test/`, timed by `clock`.
 pub(crate) fn blob_urls(clock: Arc<dyn Clock>) -> BlobUrls {
-    BlobUrls::new(
-        "http://igloo.test/".parse().expect("base"),
-        BLOB_SECRET.parse().expect("key"),
-        clock,
-    )
+    BlobUrls::new(public_url(), BLOB_SECRET.parse().expect("key"), clock)
 }
 
 /// A request from a fixed human.

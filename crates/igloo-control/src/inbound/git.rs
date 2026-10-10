@@ -14,8 +14,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures_util::StreamExt as _;
-use igloo_core::Entity as _;
 use igloo_core::repo::{Repo, RepoId};
+use igloo_core::workspace::Workspace;
+use igloo_core::{Actor, Entity as _, Resource as _};
 use igloo_git::{
     BackendProcess, BackendRequest, Exchange, Git, GitError, HttpBackend, RefName, Service,
 };
@@ -25,10 +26,13 @@ use tokio::process::ChildStdout;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 
+use super::WorkspaceCredentials;
+use super::WorkspaceGrant;
 use super::rest::DevToken;
 use crate::app::{CommandBus, InstallError, PlatformBuilder, RequestContext, TaskSpawner};
 use crate::platform::{BranchPushes, RepoQueries};
 use crate::ports::{IdGenerator, IdGeneratorExt as _};
+use crate::workspaces::WorkspaceQueries;
 
 /// Why the git endpoint is not available.
 #[derive(Debug, thiserror::Error)]
@@ -43,8 +47,11 @@ pub enum GitHttpError {
 
 /// The git endpoint over the copies of repositories under one directory.
 ///
-/// Invariants: every request is authenticated with the API token, as a bearer token or as the
-/// password of HTTP Basic, whatever the user name; a push never updates the repository's
+/// Invariants: every request is authenticated with the API token, or with the credential of a
+/// workspace's sandbox, as a bearer token or as the password of HTTP Basic, whatever the user
+/// name; a workspace credential reaches only its workspace's repository, acts as the
+/// workspace's owner and stops working when the workspace is deleted or stops running that
+/// sandbox; a push never updates the repository's
 /// default branch (it moves only by merge); a pushed branch opens or revises its change
 /// before the push is acknowledged to the client.
 #[derive(Clone)]
@@ -55,6 +62,8 @@ pub struct GitHttp {
     git: Git,
     root: PathBuf,
     auth: DevToken,
+    credentials: WorkspaceCredentials,
+    workspaces: WorkspaceQueries,
     ids: Arc<dyn IdGenerator>,
     spawner: TaskSpawner,
 }
@@ -88,6 +97,7 @@ impl GitHttp {
         platform: &PlatformBuilder,
         bus: CommandBus,
         auth: DevToken,
+        credentials: WorkspaceCredentials,
         root: PathBuf,
         spawner: TaskSpawner,
     ) -> Result<Self, GitHttpError> {
@@ -105,6 +115,8 @@ impl GitHttp {
             git,
             root,
             auth,
+            credentials,
+            workspaces: WorkspaceQueries::new(platform.store::<Workspace>()?),
             ids: Arc::clone(&ports.ids),
             spawner,
         })
@@ -180,6 +192,52 @@ impl GitHttp {
         }
     }
 
+    /// Who the request with `authorization` is from, and the repository it names.
+    async fn caller(
+        &self,
+        authorization: Option<&str>,
+        repository: &str,
+    ) -> Result<(Actor, RepoId), Rejection> {
+        let secret = DevToken::git_secret(authorization).ok_or(Rejection::Unauthenticated)?;
+        let owner = self.auth.actor_of(&secret);
+        let grant = self.credentials.verify(&secret);
+        if owner.is_none() && grant.is_none() {
+            return Err(Rejection::Unauthenticated);
+        }
+        let id: RepoId = repository
+            .strip_suffix(".git")
+            .and_then(|id| id.parse().ok())
+            .ok_or(Rejection::NotFound)?;
+        let actor = match (owner, grant) {
+            (Some(actor), _) => actor,
+            (None, Some(grant)) => self.workspace_actor(grant, id).await?,
+            (None, None) => return Err(Rejection::Unauthenticated),
+        };
+        Ok((actor, id))
+    }
+
+    /// The actor a workspace credential stands for at repository `repo`: the workspace's owner,
+    /// while the workspace exists, still runs the credential's sandbox and works on `repo`.
+    async fn workspace_actor(
+        &self,
+        grant: WorkspaceGrant,
+        repo: RepoId,
+    ) -> Result<Actor, Rejection> {
+        let workspace = self
+            .workspaces
+            .get(grant.workspace)
+            .await
+            .map_err(|error| Rejection::Failed(error.to_string()))?
+            .filter(|workspace| workspace.status().sandbox() == Some(grant.sandbox))
+            .ok_or(Rejection::Unauthenticated)?;
+        if workspace.spec().repo != repo {
+            return Err(Rejection::NotFound);
+        }
+        Ok(Actor::Human {
+            user: workspace.spec().owner,
+        })
+    }
+
     async fn start(
         &self,
         exchange: Exchange,
@@ -188,14 +246,7 @@ impl GitHttp {
         body: Body,
     ) -> Result<Response, Rejection> {
         let header = |name: HeaderName| headers.get(name).and_then(|value| value.to_str().ok());
-        let actor = self
-            .auth
-            .authenticate_git(header(AUTHORIZATION))
-            .ok_or(Rejection::Unauthenticated)?;
-        let id: RepoId = repository
-            .strip_suffix(".git")
-            .and_then(|id| id.parse().ok())
-            .ok_or(Rejection::NotFound)?;
+        let (actor, id) = self.caller(header(AUTHORIZATION), repository).await?;
         let repo = self
             .repos
             .get(id)
@@ -446,8 +497,8 @@ mod tests {
         ChangeModule, ChangeQueries, ForgeMirror, MergeChange, MirrorModule, RegisterRepo,
         RepoModule,
     };
-    use crate::ports::{Expected, Forge};
-    use crate::testing::{MemoryPlatform, MemoryStores, START, context, wait_until};
+    use crate::ports::{EventLog as _, Expected, Forge, Sequence};
+    use crate::testing::{MemoryPlatform, MemoryStores, START, blob_urls, context, wait_until};
 
     const TOKEN: &str = "git-token";
 
@@ -462,6 +513,7 @@ mod tests {
         bus: CommandBus,
         mirror: ForgeMirror,
         scratch: tempfile::TempDir,
+        credentials: WorkspaceCredentials,
         _supervisor: TaskSupervisor,
         stores: MemoryStores,
     }
@@ -482,10 +534,13 @@ mod tests {
             let actor = Actor::Human {
                 user: Id::from_uuid(Uuid::from_u128(7)),
             };
+            let credentials =
+                WorkspaceCredentials::new(&blob_urls(Arc::clone(&builder.ports().clock)));
             let git = GitHttp::new(
                 &builder,
                 builder.bus(),
                 DevToken::new(TOKEN, actor),
+                credentials.clone(),
                 stores.forge_dir.path().to_path_buf(),
                 supervisor.spawner(),
             )
@@ -537,6 +592,7 @@ mod tests {
                 bus,
                 mirror,
                 scratch,
+                credentials,
                 _supervisor: supervisor,
                 stores,
             }
@@ -630,6 +686,151 @@ mod tests {
         }
     }
 
+    impl Hosted {
+        const OWNER: u128 = 9;
+        const SANDBOX: u128 = 5;
+
+        /// A workspace of `repo` whose sandbox runs; its sandbox and a credential for it.
+        async fn workspace(
+            &self,
+            repo: igloo_core::repo::RepoId,
+        ) -> (
+            igloo_core::workspace::WorkspaceId,
+            igloo_core::sandbox::SandboxId,
+            String,
+        ) {
+            let id = Id::from_uuid(Uuid::from_u128(40));
+            let sandbox = Id::from_uuid(Uuid::from_u128(Self::SANDBOX));
+            let owner = Id::from_uuid(Uuid::from_u128(Self::OWNER));
+            let now = START;
+            let mut workspace =
+                igloo_core::workspace::Workspace::new(id, owner, repo, Self::branch("main"), now);
+            workspace
+                .sandbox_created(sandbox, std::collections::BTreeSet::new())
+                .expect("sandbox");
+            workspace.sandbox_running(sandbox, now);
+            let mut versioned = crate::ports::Versioned::new(workspace);
+            self.stores
+                .workspaces
+                .commit(&mut versioned, &context().commit_meta(now))
+                .await
+                .expect("commit");
+            (id, sandbox, self.credentials.mint(id, sandbox))
+        }
+
+        /// Clones the repository as a sandbox would, with `token` in an `Authorization` header.
+        async fn clone_with(&self, token: &str, into: &str) -> (bool, String) {
+            let header = format!("http.extraHeader=Authorization: Bearer {token}");
+            self.git(
+                self.scratch.path(),
+                &["-c", &header, "clone", &self.url(None), into],
+            )
+            .await
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_workspaces_credential_pushes_its_repositorys_branches_as_its_owner() {
+        let hosted = Hosted::start().await;
+        let (_, _, token) = hosted.workspace(hosted.repo.id()).await;
+        assert!(!token.contains(TOKEN));
+        let (ok, said) = hosted.clone_with(&token, "checkout").await;
+        assert!(ok, "{said}");
+        let work = hosted.scratch.path().join("checkout");
+
+        let header = format!("http.extraHeader=Authorization: Bearer {token}");
+        hosted
+            .ok(&work, &["switch", "--quiet", "-c", "feature"])
+            .await;
+        hosted.commit(&work, "a", "Add a").await;
+        hosted
+            .ok(
+                &work,
+                &["-c", &header, "push", "--quiet", "origin", "feature"],
+            )
+            .await;
+        let changes = hosted.changes().await;
+        assert_eq!(changes.len(), 1, "a push from the workspace opens a change");
+
+        hosted.commit(&work, "b", "Add b").await;
+        let (ok, said) = hosted
+            .git(&work, &["-c", &header, "push", "origin", "HEAD:main"])
+            .await;
+        assert!(!ok, "the default branch still moves only by merge: {said}");
+        assert!(said.contains("igloo change merge"), "{said}");
+
+        let actors = hosted
+            .stores
+            .log
+            .read(Sequence::default(), 10_000)
+            .await
+            .expect("events");
+        let opened = actors
+            .iter()
+            .find(|event| event.kind == "igloo.change.opened")
+            .expect("opened");
+        assert_eq!(
+            opened.actor.principal(),
+            Some(Id::from_uuid(Uuid::from_u128(Hosted::OWNER))),
+            "acts as the workspace's owner"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_workspaces_credential_stops_at_its_repository_its_sandbox_and_its_life() {
+        let hosted = Hosted::start().await;
+        let (id, sandbox, token) = hosted.workspace(hosted.repo.id()).await;
+
+        let other = hosted.scratch.path().join("other.git");
+        let command = RegisterRepo {
+            location: igloo_core::repo::RepoLocation::Local {
+                path: other.display().to_string(),
+            },
+            default_branch: Hosted::branch("main"),
+            token: None,
+        };
+        let other_id = hosted
+            .bus
+            .dispatch(command, context())
+            .await
+            .expect("register");
+        let header = format!("http.extraHeader=Authorization: Bearer {token}");
+        let url = hosted
+            .url(None)
+            .replace(&hosted.repo.id().to_string(), &other_id.to_string());
+        let (ok, said) = hosted
+            .git(
+                hosted.scratch.path(),
+                &["-c", &header, "clone", &url, "elsewhere"],
+            )
+            .await;
+        assert!(!ok, "another repository: {said}");
+        assert!(said.contains("not found"), "{said}");
+
+        let (ok, said) = hosted.clone_with(&format!("{token}0"), "forged").await;
+        assert!(!ok, "{said}");
+        assert!(said.contains("could not read Username"), "{said}");
+
+        // The sandbox ends: the workspace no longer runs it.
+        let stored = hosted
+            .stores
+            .workspaces
+            .load(id)
+            .await
+            .expect("load")
+            .expect("workspace");
+        let mut stored = stored;
+        stored.entity_mut().sandbox_ended(sandbox);
+        hosted
+            .stores
+            .workspaces
+            .commit(&mut stored, &context().commit_meta(START))
+            .await
+            .expect("commit");
+        let (ok, said) = hosted.clone_with(&token, "ended").await;
+        assert!(!ok, "{said}");
+        assert!(said.contains("could not read Username"), "{said}");
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn clones_and_fetches_with_the_token_and_not_without_it() {
         let hosted = Hosted::start().await;

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
 
+use crate::dotfiles::Dotfiles;
 use crate::snapshot::SnapshotId;
 use crate::{Digest, Entity, Event, Id, Prefixed, Timestamp};
 
@@ -22,6 +23,7 @@ pub struct Repo {
     location: RepoLocation,
     default_branch: BranchName,
     token: Option<SecretName>,
+    dotfiles: Option<Dotfiles>,
     warm: BTreeMap<Digest, WarmSnapshot>,
     images: BTreeMap<String, SnapshotId>,
     used: BTreeMap<Digest, Timestamp>,
@@ -127,6 +129,11 @@ pub enum RepoEvent {
         /// The key.
         key: Digest,
     },
+    /// The dotfiles new workspaces are set up with were set, or cleared when `None`.
+    DotfilesChanged {
+        /// The new setting.
+        dotfiles: Option<Dotfiles>,
+    },
 }
 
 /// Why a repository value is invalid.
@@ -188,6 +195,7 @@ impl Repo {
             location,
             default_branch,
             token,
+            dotfiles: None,
             warm: BTreeMap::new(),
             images: BTreeMap::new(),
             used: BTreeMap::new(),
@@ -204,6 +212,20 @@ impl Repo {
     /// Records that secret `name` was deleted.
     pub fn secret_deleted(&mut self, name: SecretName) {
         self.record(RepoEvent::SecretDeleted { name });
+    }
+
+    /// Sets the dotfiles new workspaces are set up with, or clears them with `None`. Nothing is
+    /// recorded when the setting does not change.
+    pub fn set_dotfiles(&mut self, dotfiles: Option<Dotfiles>) {
+        if self.dotfiles != dotfiles {
+            self.record(RepoEvent::DotfilesChanged { dotfiles });
+        }
+    }
+
+    /// The dotfiles new workspaces are set up with, if set.
+    #[must_use]
+    pub const fn dotfiles(&self) -> Option<&Dotfiles> {
+        self.dotfiles.as_ref()
     }
 
     /// Records `snapshot` as the import of `image`.
@@ -315,6 +337,7 @@ impl Event for RepoEvent {
             Self::ImageImported { .. } => "igloo.repo.image_imported",
             Self::WarmSnapshotUsed { .. } => "igloo.repo.warm_snapshot_used",
             Self::WarmSnapshotForgotten { .. } => "igloo.repo.warm_snapshot_forgotten",
+            Self::DotfilesChanged { .. } => "igloo.repo.dotfiles_changed",
         }
     }
 }
@@ -365,6 +388,9 @@ impl Entity for Repo {
             }
             RepoEvent::ImageImported { image, snapshot } => {
                 self.images.insert(image.clone(), *snapshot);
+            }
+            RepoEvent::DotfilesChanged { dotfiles } => {
+                self.dotfiles.clone_from(dotfiles);
             }
         }
     }
@@ -708,6 +734,30 @@ mod tests {
             .then([RepoEvent::SecretDeleted { name: name.clone() }]);
     }
 
+    #[test]
+    fn dotfiles_are_set_replaced_and_cleared_and_only_changes_are_recorded() {
+        let dotfiles = |install: &str| {
+            Dotfiles::new("https://github.com/me/dotfiles", install).expect("dotfiles")
+        };
+        let changed = |install: Option<&str>| RepoEvent::DotfilesChanged {
+            dotfiles: install.map(dotfiles),
+        };
+        let scenario = S::given([registered()])
+            .when(|repo, _| repo.set_dotfiles(None))
+            .then([])
+            .when(|repo, _| repo.set_dotfiles(Some(dotfiles("make"))))
+            .then([changed(Some("make"))])
+            .when(|repo, _| repo.set_dotfiles(Some(dotfiles("make"))))
+            .then([])
+            .when(|repo, _| repo.set_dotfiles(Some(dotfiles("./install.sh"))))
+            .then([changed(Some("./install.sh"))]);
+        assert_eq!(scenario.state().dotfiles(), Some(&dotfiles("./install.sh")));
+        let scenario = scenario
+            .when(|repo, _| repo.set_dotfiles(None))
+            .then([changed(None)]);
+        assert_eq!(scenario.state().dotfiles(), None);
+    }
+
     fn registered() -> RepoEvent {
         RepoEvent::Registered {
             id: S::ID,
@@ -742,6 +792,13 @@ mod tests {
             RepoEvent::WarmSnapshotForgotten {
                 key: Digest::from_blake3([1; 32]),
             },
+            RepoEvent::DotfilesChanged {
+                dotfiles: Some(
+                    Dotfiles::new("https://github.com/me/dotfiles", "./install.sh")
+                        .expect("dotfiles"),
+                ),
+            },
+            RepoEvent::DotfilesChanged { dotfiles: None },
         ];
         insta::assert_json_snapshot!(events);
     }

@@ -39,5 +39,16 @@ expression: events
   {
     "type": "warm_snapshot_forgotten",
     "key": "blake3:0101010101010101010101010101010101010101010101010101010101010101"
+  },
+  {
+    "type": "dotfiles_changed",
+    "dotfiles": {
+      "repository": "https://github.com/me/dotfiles",
+      "install": "./install.sh"
+    }
+  },
+  {
+    "type": "dotfiles_changed",
+    "dotfiles": null
   }
 ]

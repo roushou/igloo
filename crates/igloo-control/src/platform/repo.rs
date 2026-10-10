@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use igloo_core::dotfiles::Dotfiles;
 use igloo_core::repo::{BranchName, Repo, RepoId, RepoLocation, SecretName, WarmSnapshot};
 use igloo_core::snapshot::SnapshotId;
 use igloo_core::{Digest, Entity, ErrorCode, Timestamp};
@@ -40,6 +41,14 @@ pub struct DeleteSecret {
     pub repo: RepoId,
     /// The secret.
     pub name: SecretName,
+}
+
+/// Sets the dotfiles new workspaces of a repository are set up with, or clears them.
+pub struct SetDotfiles {
+    /// The repository.
+    pub repo: RepoId,
+    /// The setting; `None` clears it.
+    pub dotfiles: Option<Dotfiles>,
 }
 
 /// Records the warm snapshot built for `key`.
@@ -109,6 +118,11 @@ impl Command for RegisterRepo {
 impl Command for SetSecret {
     type Output = ();
     const NAME: &'static str = "repo.set_secret";
+}
+
+impl Command for SetDotfiles {
+    type Output = ();
+    const NAME: &'static str = "repo.set_dotfiles";
 }
 
 impl Command for DeleteSecret {
@@ -308,6 +322,14 @@ impl Extension for RepoModule {
             secrets: Arc::clone(&ports.secrets),
             clock: Arc::clone(&ports.clock),
         })?;
+        platform.command(EntityHandler::infallible(
+            Arc::clone(&store),
+            Arc::clone(&ports.clock),
+            |command: &SetDotfiles| command.repo,
+            |repo: &mut Repo, command: &SetDotfiles, _| {
+                repo.set_dotfiles(command.dotfiles.clone());
+            },
+        ))?;
         platform.command(EntityHandler::infallible(
             Arc::clone(&store),
             Arc::clone(&ports.clock),

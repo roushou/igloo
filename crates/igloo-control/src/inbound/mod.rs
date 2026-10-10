@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod rest;
 mod terminals;
 mod web;
+mod workspace_credentials;
 
 pub use blob_urls::{
     BlobAccess, BlobSignature, BlobSigningKey, BlobUrlRejected, BlobUrls, WeakSecret,
@@ -16,3 +17,4 @@ pub use git::{GitHttp, GitHttpError};
 pub(crate) use terminals::WorkerLink;
 pub use terminals::{TerminalError, TerminalEvent, TerminalHub, TerminalLaunch, TerminalSession};
 pub use web::WebConsole;
+pub use workspace_credentials::{WorkspaceCredentials, WorkspaceGrant};

@@ -5,17 +5,18 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use igloo_api::problem::Problem;
 use igloo_api::repo::{
-    CheckoutTarget, RegisterRepoRequest, RepoRegistration, RepoResource, RepoSnapshotRequest,
-    RepoSnapshotResource, SecretList,
+    CheckoutTarget, DotfilesResource, RegisterRepoRequest, RepoRegistration, RepoResource,
+    RepoSnapshotRequest, RepoSnapshotResource, SecretList,
 };
 use igloo_api::snapshot::WarmSnapshotResource;
 use igloo_core::ValidationErrors;
+use igloo_core::dotfiles::Dotfiles;
 use igloo_core::repo::{RepoId, SecretName};
 
 use super::auth::Caller;
 use super::{ApiError, ApiState};
 use crate::app::AppError;
-use crate::platform::{DeleteSecret, RegisterRepo, SetSecret};
+use crate::platform::{DeleteSecret, RegisterRepo, SetDotfiles, SetSecret};
 use crate::ports::SecretValue;
 
 /// Registers a repository.
@@ -259,6 +260,59 @@ pub(super) async fn delete_secret(
     let command = DeleteSecret {
         repo: parse_id(&id)?,
         name: parse_name(&name)?,
+    };
+    state.bus.dispatch(command, context).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Sets the dotfiles new workspaces of the repository are set up with.
+#[utoipa::path(
+    put,
+    operation_id = "setRepoDotfiles",
+    path = "/v1/repos/{id}/dotfiles",
+    tag = "repos",
+    params(("id" = String, Path)),
+    request_body = DotfilesResource,
+    responses(
+        (status = 200, body = RepoResource),
+        (status = 404, body = Problem),
+        (status = 422, body = Problem),
+    )
+)]
+pub(super) async fn set_dotfiles(
+    State(state): State<ApiState>,
+    Caller(context): Caller,
+    Path(id): Path<String>,
+    request: Result<Json<DotfilesResource>, JsonRejection>,
+) -> Result<Json<RepoResource>, ApiError> {
+    let Json(request) = request?;
+    let repo = parse_id(&id)?;
+    let dotfiles = Dotfiles::try_from(request).map_err(AppError::from)?;
+    let command = SetDotfiles {
+        repo,
+        dotfiles: Some(dotfiles),
+    };
+    state.bus.dispatch(command, context).await?;
+    Ok(Json(load(&state, repo).await?))
+}
+
+/// Clears the dotfiles of the repository.
+#[utoipa::path(
+    delete,
+    operation_id = "clearRepoDotfiles",
+    path = "/v1/repos/{id}/dotfiles",
+    tag = "repos",
+    params(("id" = String, Path)),
+    responses((status = 204), (status = 404, body = Problem))
+)]
+pub(super) async fn clear_dotfiles(
+    State(state): State<ApiState>,
+    Caller(context): Caller,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let command = SetDotfiles {
+        repo: parse_id(&id)?,
+        dotfiles: None,
     };
     state.bus.dispatch(command, context).await?;
     Ok(StatusCode::NO_CONTENT)

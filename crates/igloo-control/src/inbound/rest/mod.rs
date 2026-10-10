@@ -46,7 +46,7 @@ use self::timings::Timings;
 use crate::agents::{Task, TaskQueries, Transcripts};
 use crate::app::{CommandBus, InstallError, PlatformBuilder};
 use crate::ci::{Merger, Run, RunQueries};
-use crate::inbound::{BlobUrls, TerminalHub};
+use crate::inbound::{BlobUrls, TerminalHub, WorkspaceCredentials};
 use crate::platform::{
     BuildQueries, ChangeHeads, ChangeQueries, ImageImporter, LayerCollector, RepoQueries,
     RepoSnapshots, SandboxQueries, Snapshots, WorkerUsages,
@@ -78,6 +78,7 @@ pub(crate) struct ApiState {
     transcripts: Transcripts,
     workspaces: WorkspaceQueries,
     workspace_secrets: WorkspaceSecrets,
+    workspace_credentials: WorkspaceCredentials,
     merger: Merger,
     repo_snapshots: RepoSnapshots,
     forge: Arc<dyn Forge>,
@@ -162,6 +163,7 @@ impl RestApi {
                     WorkspaceQueries::new(platform.store::<Workspace>()?),
                     Arc::clone(&ports.secrets),
                 ),
+                workspace_credentials: WorkspaceCredentials::new(&blob_urls),
                 transcripts: Transcripts::new(Arc::clone(&ports.logs)),
                 merger: Merger::new(
                     RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
@@ -279,6 +281,7 @@ impl RestApi {
             .routes(routes!(runs::of_repo))
             .routes(routes!(runs::get))
             .routes(routes!(repos::set_secret, repos::delete_secret))
+            .routes(routes!(repos::set_dotfiles, repos::clear_dotfiles))
             .routes(routes!(tasks::create, tasks::list))
             .routes(routes!(tasks::get))
             .routes(routes!(tasks::cancel))

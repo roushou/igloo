@@ -36,7 +36,7 @@ pub use mirror::{ForgeMirror, MirrorModule};
 pub use push::{BranchPushes, Branches, PushedChange};
 pub use repo::{
     DeleteSecret, ForgetWarmSnapshots, RecordImage, RecordWarmSnapshot, RecordWarmUse,
-    RegisterRepo, RepoError, RepoModule, RepoQueries, SetSecret,
+    RegisterRepo, RepoError, RepoModule, RepoQueries, SetDotfiles, SetSecret,
 };
 pub use sandbox::{
     CreateSandbox, PlacementError, RecordSandboxStatus, SandboxModule, SandboxQueries,

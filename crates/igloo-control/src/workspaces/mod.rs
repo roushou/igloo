@@ -4,15 +4,18 @@
 mod commands;
 mod lifecycle;
 mod reactors;
+mod setup;
 
 #[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
 
+use igloo_core::job::Job;
 use igloo_core::repo::Repo;
 use igloo_core::seal::Seal;
 use igloo_core::workspace::{Workspace, WorkspaceError};
+use reqwest::Url;
 
 use self::commands::CreateWorkspaceHandler;
 pub use self::commands::{
@@ -23,6 +26,7 @@ pub use self::commands::{
 };
 use self::lifecycle::Lifecycle;
 use self::reactors::{FollowSandboxes, FollowSeals};
+use self::setup::{ReportSetups, SetUpWorkspaces, WorkspaceSetup};
 use crate::app::{ControllerSettings, EntityHandler, Extension, InstallError, PlatformBuilder};
 use crate::ci::CiModule;
 use crate::platform::{RepoQueries, RepoSnapshots, SandboxQueries};
@@ -32,6 +36,9 @@ use crate::platform::{RepoQueries, RepoSnapshots, SandboxQueries};
 pub struct WorkspaceModule {
     /// Pacing of the workspace controller.
     pub settings: ControllerSettings,
+    /// The public URL of the server, under which each repository's git is served at
+    /// `/git/<repository id>.git`: the `origin` of every new workspace's checkout.
+    pub git_base: Url,
 }
 
 impl Extension for WorkspaceModule {
@@ -58,7 +65,17 @@ impl Extension for WorkspaceModule {
         platform.reactor(FollowSandboxes {
             workspaces: workspaces.clone(),
         });
-        platform.reactor(FollowSeals { workspaces });
+        platform.reactor(FollowSeals {
+            workspaces: workspaces.clone(),
+        });
+        platform.reactor(SetUpWorkspaces {
+            setup: WorkspaceSetup::new(self.git_base),
+            workspaces,
+            repos: platform.store::<Repo>()?,
+        });
+        platform.reactor(ReportSetups {
+            jobs: platform.store::<Job>()?,
+        });
         Ok(())
     }
 }

@@ -60,22 +60,21 @@ pub(super) async fn open(
                 .with_detail(format!("the sandbox is {}", status.phase().name())),
         )));
     };
+    let sandbox_id = igloo_core::Entity::id(&sandbox);
+    let workspace = state.workspace_secrets.workspace_of(sandbox_id).await?;
+    let mut env = state.workspace_secrets.terminal_env(sandbox_id).await?;
+    if let Some(workspace) = workspace {
+        env.extend(state.workspace_credentials.git_env(workspace, sandbox_id));
+    }
     let launch = TerminalLaunch {
-        sandbox: igloo_core::Entity::id(&sandbox),
+        sandbox: sandbox_id,
         argv: request.command,
-        env: state
-            .workspace_secrets
-            .terminal_env(igloo_core::Entity::id(&sandbox))
-            .await?,
+        env,
         size: request.size,
     };
     let session = state
         .terminals
         .open(state.ids.next(), worker, launch)
-        .await?;
-    let workspace = state
-        .workspace_secrets
-        .workspace_of(igloo_core::Entity::id(&sandbox))
         .await?;
     let presence = workspace.map(|workspace| Presence::new(state.bus.clone(), workspace, context));
     Ok(upgrade

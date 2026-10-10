@@ -1,6 +1,7 @@
 //! Repositories and their secrets.
 
 use igloo_core::Entity;
+use igloo_core::dotfiles::Dotfiles;
 use igloo_core::repo::{BranchName, CommitId, Repo, RepoLocation, RepoValueError, SecretName};
 use igloo_core::snapshot::SnapshotId;
 use igloo_core::{ValidationErrors, Validator};
@@ -38,6 +39,49 @@ pub struct RepoResource {
     /// and push there with the API token as the password.
     #[serde(default)]
     pub git_path: String,
+    /// The dotfiles new workspaces are set up with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dotfiles: Option<DotfilesResource>,
+}
+
+/// The dotfiles new workspaces of a repository are set up with: the repository is cloned and
+/// the install command run in the clone, once, when a workspace is created.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct DotfilesResource {
+    /// The URL to clone: `https://`, `http://`, `ssh://` or `git@`.
+    pub repository: String,
+    /// The shell command run in the clone; a failure is reported and does not fail the
+    /// workspace.
+    pub install: String,
+}
+
+impl DotfilesResource {
+    /// Dotfiles cloned from `repository` and installed by `install`.
+    #[must_use]
+    pub fn new(repository: impl Into<String>, install: impl Into<String>) -> Self {
+        Self {
+            repository: repository.into(),
+            install: install.into(),
+        }
+    }
+}
+
+impl TryFrom<DotfilesResource> for Dotfiles {
+    type Error = ValidationErrors;
+
+    fn try_from(resource: DotfilesResource) -> Result<Self, Self::Error> {
+        Self::new(resource.repository, resource.install)
+    }
+}
+
+impl From<&Dotfiles> for DotfilesResource {
+    fn from(dotfiles: &Dotfiles) -> Self {
+        Self {
+            repository: dotfiles.repository().to_owned(),
+            install: dotfiles.install().to_owned(),
+        }
+    }
 }
 
 /// Makes a snapshot of a repository at a commit: its checkout under `/workspace`, with a shallow
@@ -221,6 +265,7 @@ impl From<&Repo> for RepoResource {
             default_branch: repo.default_branch().to_string(),
             token_secret: repo.token().map(ToString::to_string),
             git_path: format!("/git/{}.git", repo.id()),
+            dotfiles: repo.dotfiles().map(DotfilesResource::from),
         }
     }
 }
@@ -230,5 +275,21 @@ impl From<Vec<SecretName>> for SecretList {
         Self {
             names: names.into_iter().map(String::from).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dotfiles_convert_both_ways_and_invalid_ones_report_their_fields() {
+        let resource = DotfilesResource::new("https://github.com/me/dotfiles", "./install.sh");
+        let dotfiles = Dotfiles::try_from(resource.clone()).expect("valid");
+        assert_eq!(DotfilesResource::from(&dotfiles), resource);
+
+        let errors = Dotfiles::try_from(DotfilesResource::new("nope", "")).expect_err("invalid");
+        let fields: Vec<_> = errors.fields().map(|(field, _)| field).collect();
+        assert_eq!(fields, ["install", "repository"]);
     }
 }

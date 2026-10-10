@@ -996,6 +996,93 @@
         }
       }
     },
+    "/v1/repos/{id}/dotfiles": {
+      "put": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Sets the dotfiles new workspaces of the repository are set up with.",
+        "operationId": "setRepoDotfiles",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DotfilesResource"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Clears the dotfiles of the repository.",
+        "operationId": "clearRepoDotfiles",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/repos/{id}/runs": {
       "get": {
         "tags": [
@@ -3057,6 +3144,24 @@
           }
         }
       },
+      "DotfilesResource": {
+        "type": "object",
+        "description": "The dotfiles new workspaces of a repository are set up with: the repository is cloned and\nthe install command run in the clone, once, when a workspace is created.",
+        "required": [
+          "repository",
+          "install"
+        ],
+        "properties": {
+          "install": {
+            "type": "string",
+            "description": "The shell command run in the clone; a failure is reported and does not fail the\nworkspace."
+          },
+          "repository": {
+            "type": "string",
+            "description": "The URL to clone: `https://`, `http://`, `ssh://` or `git@`."
+          }
+        }
+      },
       "EventNotice": {
         "type": "object",
         "description": "What `GET /v1/events` sends as the `data` of each server-sent event: which resource changed\nand when, never the domain payload. Clients refetch the resource.",
@@ -3546,6 +3651,17 @@
           "default_branch": {
             "type": "string",
             "description": "The branch changes merge into."
+          },
+          "dotfiles": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DotfilesResource",
+                "description": "The dotfiles new workspaces are set up with."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "git_path": {
             "type": "string",

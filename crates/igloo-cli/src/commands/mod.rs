@@ -14,6 +14,7 @@ mod repo;
 mod run;
 mod sandbox;
 mod secret;
+mod shell;
 mod snapshot;
 mod task;
 mod workspace;
@@ -30,6 +31,8 @@ pub(crate) enum Command {
     Task(task::Task),
     /// Manages workspaces: long-lived sandboxes where a person works on a branch.
     Workspace(workspace::Workspace),
+    /// Opens a terminal in a workspace, starting it when stopped.
+    Shell(shell::Shell),
     /// Manages repositories.
     Repo(repo::Repo),
     /// Manages repository secrets, exposed to jobs that name them.
@@ -50,6 +53,7 @@ impl Command {
             Self::Change(cmd) => cmd.execute(client).await,
             Self::Task(cmd) => cmd.execute(client).await,
             Self::Workspace(cmd) => cmd.execute(client).await,
+            Self::Shell(cmd) => cmd.execute(client).await,
             Self::Repo(cmd) => cmd.execute(client).await,
             Self::Secret(cmd) => cmd.execute(client).await,
             Self::Snapshot(cmd) => cmd.execute(client).await,

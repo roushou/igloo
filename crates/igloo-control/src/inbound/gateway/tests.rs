@@ -29,15 +29,15 @@ use uuid::Uuid;
 use super::Gateway;
 use super::ws_client::{Frame, WsClient};
 use crate::app::{AppError, CommandBus, ControllerSettings, TaskSupervisor};
-use crate::inbound::TerminalHub;
 use crate::inbound::rest::{DevToken, RestApi};
+use crate::inbound::{TerminalHub, WorkspaceCredentials};
 use crate::platform::{
     CancelJob, CreateSandbox, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule,
     SubmitJob, WorkerModule, WorkerUsages,
 };
 use crate::platform::{RegisterRepo, SetSecret};
 use crate::testing::{
-    MemoryPlatform, MemoryStores, blob_urls, context, register_snapshot, wait_until,
+    MemoryPlatform, MemoryStores, blob_urls, context, public_url, register_snapshot, wait_until,
 };
 use crate::workspaces::{CreateWorkspace, WorkspaceModule};
 
@@ -52,6 +52,7 @@ struct Harness {
     /// Where the REST API listens, for `WebSocket`s.
     http: SocketAddr,
     supervisor: TaskSupervisor,
+    credentials: WorkspaceCredentials,
 }
 
 impl Harness {
@@ -75,7 +76,10 @@ impl Harness {
         builder.install(SnapshotModule).expect("snapshot module");
         builder.install(SealModule).expect("seal module");
         builder
-            .install(WorkspaceModule { settings })
+            .install(WorkspaceModule {
+                settings,
+                git_base: public_url(),
+            })
             .expect("workspace module");
         builder.install(RepoModule).expect("repo module");
         let supervisor = TaskSupervisor::new();
@@ -96,6 +100,7 @@ impl Harness {
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(7)),
         };
+        let credentials = WorkspaceCredentials::new(&urls);
         let rest = RestApi::new(
             &builder,
             builder.bus(),
@@ -136,6 +141,7 @@ impl Harness {
             address,
             http,
             supervisor,
+            credentials,
         }
     }
 
@@ -1198,6 +1204,22 @@ async fn a_workspaces_terminal_gets_its_secrets_and_marks_the_workspace_used() {
         .expect("upgrade");
     let open = worker.open_terminal().await;
     assert_eq!(open.env.get("TOKEN").map(String::as_str), Some("hunter2"));
+    let header = open
+        .env
+        .get("GIT_CONFIG_VALUE_0")
+        .and_then(|value| value.strip_prefix("Authorization: Bearer "))
+        .expect("a git credential");
+    assert_ne!(header, API_TOKEN, "the API token never enters a sandbox");
+    assert!(
+        open.env.values().all(|value| !value.contains(API_TOKEN)),
+        "{:?}",
+        open.env
+    );
+    let grant = harness
+        .credentials
+        .verify(header)
+        .expect("a credential minted by this server");
+    assert_eq!((grant.workspace, grant.sandbox), (workspace, sandbox));
     wait_until(async || activity().await.last_activity() > before).await;
     harness.stop().await;
 }

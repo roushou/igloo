@@ -20,6 +20,7 @@ mod version;
 
 pub mod build;
 pub mod change;
+pub mod dotfiles;
 pub mod job;
 pub mod process;
 pub mod repo;

@@ -20,7 +20,7 @@ use crate::platform::{
     ChangeModule, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule, WorkerModule,
 };
 use crate::ports::{CommitMeta, CorrelationId, EntityStore, Versioned};
-use crate::testing::{FIXTURE_IMAGE, MemoryPlatform, MemoryStores, START, blob_urls};
+use crate::testing::{FIXTURE_IMAGE, MemoryPlatform, MemoryStores, START, blob_urls, public_url};
 use crate::workspaces::WorkspaceModule;
 
 const TOKEN: &str = "dev-token";
@@ -71,6 +71,7 @@ fn api_parts() -> (
     builder
         .install(WorkspaceModule {
             settings: ControllerSettings::default(),
+            git_base: public_url(),
         })
         .expect("workspace module");
     let actor = Actor::Human {
@@ -505,6 +506,54 @@ async fn repositories_are_registered_once_and_their_secret_values_never_returned
     let (status, body, _) = Call::new(Method::DELETE, &secret).send(&router).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "secret.not_found");
+}
+
+#[tokio::test]
+async fn a_repositorys_dotfiles_are_set_reported_and_cleared() {
+    let router = api();
+    let id = register(&router, "github.com/roushou/igloo").await;
+    let path = format!("/v1/repos/{id}/dotfiles");
+    let dotfiles =
+        json!({ "repository": "https://github.com/me/dotfiles", "install": "./install.sh" });
+
+    let (status, repo, _) = Call::new(Method::PUT, &path)
+        .json(&dotfiles)
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{repo}");
+    assert_eq!(repo["dotfiles"], dotfiles);
+    let (_, repo, _) = Call::new(Method::GET, format!("/v1/repos/{id}"))
+        .send(&router)
+        .await;
+    assert_eq!(repo["dotfiles"], dotfiles);
+
+    let invalid = json!({ "repository": "nope", "install": " " });
+    let (status, body, _) = Call::new(Method::PUT, &path)
+        .json(&invalid)
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (_, repo, _) = Call::new(Method::GET, format!("/v1/repos/{id}"))
+        .send(&router)
+        .await;
+    assert_eq!(
+        repo["dotfiles"], dotfiles,
+        "a rejected request changes nothing"
+    );
+
+    let (status, _, _) = Call::new(Method::DELETE, &path).send(&router).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, repo, _) = Call::new(Method::GET, format!("/v1/repos/{id}"))
+        .send(&router)
+        .await;
+    assert!(repo.get("dotfiles").is_none(), "{repo}");
+
+    let unknown = "/v1/repos/repo_00000000000000000000000000/dotfiles";
+    let (status, _, _) = Call::new(Method::PUT, unknown)
+        .json(&dotfiles)
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

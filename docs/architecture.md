@@ -332,6 +332,11 @@ composition.rs  Server: the only place naming concrete adapters
   carry sandbox and seal outcomes back as commands. A workspace with no terminal attached for two
   hours stops itself: an attached terminal records activity when it opens, every ten minutes, and
   when it closes. Deleting stops the sandbox without sealing.
+  The first time a workspace's sandbox runs (not on a resume), a reactor submits a setup job in it:
+  `origin` is pointed at Igloo's git endpoint and the repository's dotfiles, a `Repo` setting
+  (`PUT /v1/repos/{id}/dotfiles`), are cloned and installed. The job carries no credential, runs
+  at most once per checkout (a marker in `.git`) and its failure is reported by the failed job, not
+  by the workspace. See `docs/workspaces.md`.
 
 ## 8. Worker
 
@@ -418,6 +423,10 @@ composition.rs  Server: the only place naming concrete adapters
   A workspace's terminal is its sandbox's: clients read the workspace's `sandbox` and open that. When
   the sandbox belongs to a workspace, the terminal's environment carries the repository secrets the
   workspace was opened with, and the workspace is marked in use while the terminal is attached.
+  The terminal of a workspace's sandbox also carries a git credential in `GIT_CONFIG_*`: a token
+  signed with the server's blob key (`inbound/workspace_credentials.rs`) naming the workspace and
+  its sandbox. The git endpoint accepts it only for the workspace's repository, as the workspace's
+  owner, while the workspace still runs that sandbox. The API token never enters a sandbox.
 - **Worker protocol** `igloo.worker.v1`: the server sends the full desired `Assignment`, lease
   grants, cancels and drain; the worker sends hello, heartbeats, usage (disk, layer cache, sandboxes held; every 30 s), status, logs and results.
   Terminals ride the same stream: the server sends open, input, resize and close; the worker sends
@@ -488,7 +497,8 @@ repository is registered, pushes the default branch after every merge and every
 change that ended. The default branch reaches the forge only as a fast-forward, and a forge that
 is ahead of the copy is fetched into it. Review, checks and merge decisions live in Igloo.
 `igloo change checkout <id>` fetches a change locally as a branch. `igloo git-credential` is a git
-credential helper that answers with the API token for Igloo's own host only.
+credential helper that answers with the API token for Igloo's own host only. `igloo shell` opens a
+terminal in a workspace over the sandbox terminal endpoint (`docs/workspaces.md`).
 
 ## 13. Agents and autonomy
 

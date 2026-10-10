@@ -35,17 +35,22 @@ impl DevToken {
         (presented == &*self.token).then_some(self.actor)
     }
 
-    /// The actor a git client stands for: a bearer token, or HTTP Basic with the token as the
-    /// password and any user name, which is what git sends.
-    pub(in crate::inbound) fn authenticate_git(&self, header: Option<&str>) -> Option<Actor> {
+    /// The actor `secret` stands for, if it is this token.
+    pub(in crate::inbound) fn actor_of(&self, secret: &str) -> Option<Actor> {
+        (secret == &*self.token).then_some(self.actor)
+    }
+
+    /// The secret a git client presented: a bearer token, or the password of HTTP Basic
+    /// whatever the user name.
+    pub(in crate::inbound) fn git_secret(header: Option<&str>) -> Option<String> {
         let header = header?;
-        if header.starts_with("Bearer ") {
-            return self.authenticate(Some(header));
+        if let Some(token) = header.strip_prefix("Bearer ") {
+            return Some(token.to_owned());
         }
         let credentials = Base64::decode(header.strip_prefix("Basic ")?.trim())?;
         let text = String::from_utf8(credentials).ok()?;
         let (_, password) = text.split_once(':')?;
-        (password == &*self.token).then_some(self.actor)
+        Some(password.to_owned())
     }
 }
 

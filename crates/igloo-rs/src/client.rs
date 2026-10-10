@@ -2,7 +2,8 @@ use igloo_api::change::{ApproveRequest, ChangeResource, CommentRequest, OpenChan
 use igloo_api::job::{ExecRequest, JobResource};
 use igloo_api::problem::Problem;
 use igloo_api::repo::{
-    RegisterRepoRequest, RepoResource, RepoSnapshotRequest, RepoSnapshotResource, SecretList,
+    DotfilesResource, RegisterRepoRequest, RepoResource, RepoSnapshotRequest, RepoSnapshotResource,
+    SecretList,
 };
 use igloo_api::run::RunResource;
 use igloo_api::sandbox::{CreateSandboxRequest, SandboxList, SandboxResource};
@@ -14,6 +15,7 @@ use reqwest::{Method, RequestBuilder, Url};
 use serde::de::DeserializeOwned;
 
 use crate::logs::LogStream;
+use crate::terminal::Terminal;
 
 /// A client of the Igloo REST API.
 #[derive(Clone, Debug)]
@@ -42,6 +44,9 @@ pub enum Error {
     /// A local file could not be read.
     #[error("local I/O failure")]
     Io(#[from] std::io::Error),
+    /// A workspace could not be brought to the state asked for; the message says why.
+    #[error("{0}")]
+    Workspace(String),
 }
 
 impl Client {
@@ -348,6 +353,36 @@ impl Client {
     /// Deletes a workspace, dropping its unsealed changes.
     pub async fn delete_workspace(&self, id: &str) -> Result<(), Error> {
         self.send_empty(self.request(Method::DELETE, &format!("v1/workspaces/{id}"))?)
+            .await
+    }
+
+    /// Opens a terminal in a running sandbox, with a screen of `cols` by `rows` characters.
+    /// `command` is the program and its arguments; empty runs the sandbox's default shell. A
+    /// workspace's terminal is its sandbox's. The process ends when the terminal is dropped.
+    pub async fn open_terminal(
+        &self,
+        sandbox: &str,
+        command: &[String],
+        cols: u16,
+        rows: u16,
+    ) -> Result<Terminal, Error> {
+        let url = self.url(&format!("v1/sandboxes/{sandbox}/terminal"))?;
+        Terminal::connect(url, &self.token, command, cols, rows).await
+    }
+
+    /// Sets the dotfiles new workspaces of a repository are set up with.
+    pub async fn set_dotfiles(
+        &self,
+        repo: &str,
+        dotfiles: &DotfilesResource,
+    ) -> Result<RepoResource, Error> {
+        let request = self.request(Method::PUT, &format!("v1/repos/{repo}/dotfiles"))?;
+        self.send(Self::json(request, dotfiles)?).await
+    }
+
+    /// Clears a repository's dotfiles.
+    pub async fn clear_dotfiles(&self, repo: &str) -> Result<(), Error> {
+        self.send_empty(self.request(Method::DELETE, &format!("v1/repos/{repo}/dotfiles"))?)
             .await
     }
 
