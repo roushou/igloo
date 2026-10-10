@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use igloo_core::job::JobId;
 use igloo_core::repo::{BranchName, Repo, RepoId, SecretName};
 use igloo_core::sandbox::SandboxId;
 use igloo_core::seal::SealId;
 use igloo_core::snapshot::SnapshotId;
-use igloo_core::workspace::{Workspace, WorkspaceId};
+use igloo_core::workspace::{SetupOutcome, Workspace, WorkspaceId};
 use igloo_core::{Entity, Resource, ValidationErrors};
 
 use crate::app::{AppError, Command, CommandHandler, RequestContext};
@@ -102,6 +103,18 @@ pub struct RecordWorkspaceEnded {
     pub sandbox: SandboxId,
 }
 
+/// Records how the job setting up a workspace's sandbox ended.
+pub struct RecordWorkspaceSetup {
+    /// The workspace.
+    pub workspace: WorkspaceId,
+    /// The sandbox that was set up.
+    pub sandbox: SandboxId,
+    /// The setup job.
+    pub job: JobId,
+    /// How it ended.
+    pub outcome: SetupOutcome,
+}
+
 macro_rules! commands {
     ($($command:ty => $output:ty, $name:literal;)*) => {
         $(impl Command for $command {
@@ -124,6 +137,7 @@ commands! {
     RecordWorkspaceSeal => (), "workspace.record_seal";
     RecordWorkspaceStopping => (), "workspace.record_stopping";
     RecordWorkspaceEnded => (), "workspace.record_ended";
+    RecordWorkspaceSetup => (), "workspace.record_setup";
 }
 
 /// Read access to workspaces beyond loading one by id. Deleted workspaces are never returned,

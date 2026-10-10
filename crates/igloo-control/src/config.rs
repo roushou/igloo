@@ -14,9 +14,10 @@ use crate::inbound::{BlobSigningKey, WebConsole};
 
 /// Every variable the server reads. Any other `IGLOO_*` variable is an error, except the
 /// worker's and the CLI's.
-const VARIABLES: [&str; 15] = [
+const VARIABLES: [&str; 16] = [
     "IGLOO_DATABASE_URL",
     "IGLOO_DEV_TOKEN",
+    "IGLOO_USER_NAME",
     "IGLOO_JOIN_TOKEN",
     "IGLOO_BLOB_KEY",
     "IGLOO_SECRETS_KEY",
@@ -86,6 +87,7 @@ pub struct Config {
     pub(crate) database_url: String,
     pub(crate) data_dir: PathBuf,
     pub(crate) dev_token: String,
+    pub(crate) user_name: Option<String>,
     pub(crate) join_token: String,
     pub(crate) blob_key: BlobSigningKey,
     pub(crate) secrets_key: SecretsKey,
@@ -122,16 +124,8 @@ impl Config {
                 Err("must be a postgres:// URL")
             }
         });
-        let blob_key = vars.required("IGLOO_BLOB_KEY").and_then(|secret| {
-            secret
-                .parse::<BlobSigningKey>()
-                .map_err(|_| "must be at least 32 bytes")
-        });
-        let secrets_key = vars.required("IGLOO_SECRETS_KEY").and_then(|secret| {
-            secret
-                .parse::<SecretsKey>()
-                .map_err(|_| "must be at least 32 bytes")
-        });
+        let blob_key = vars.key::<BlobSigningKey>("IGLOO_BLOB_KEY");
+        let secrets_key = vars.key::<SecretsKey>("IGLOO_SECRETS_KEY");
         let public_url = vars.text("IGLOO_PUBLIC_URL").and_then(|url| {
             url.map(|url| url.parse::<Url>())
                 .transpose()
@@ -196,12 +190,16 @@ impl Config {
             .field("IGLOO_EMBEDDED_WORKER", vars.flag("IGLOO_EMBEDDED_WORKER"))
             .field("IGLOO_WEB_DIR", vars.web_dir())
             .finish()?;
+        let user_name = vars
+            .text("IGLOO_USER_NAME")
+            .map_err(|problem| ValidationErrors::single("IGLOO_USER_NAME", problem))?;
         Ok(Self {
             listen,
             gateway_listen,
             database_url,
             data_dir,
             dev_token,
+            user_name,
             join_token,
             blob_key,
             secrets_key,
@@ -311,6 +309,13 @@ impl Vars {
         self.text(name)?.ok_or("is required")
     }
 
+    /// The value of `name`, which must be set, as a key of at least 32 bytes.
+    fn key<T: FromStr>(&self, name: &str) -> Result<T, &'static str> {
+        self.required(name)?
+            .parse()
+            .map_err(|_| "must be at least 32 bytes")
+    }
+
     /// The value of `name` as a socket address, or `default`.
     fn address(&self, name: &str, default: &str) -> Result<SocketAddr, &'static str> {
         self.text(name)?
@@ -409,6 +414,7 @@ mod tests {
         assert_eq!(config.public_url, None);
         assert_eq!(config.log_format, LogFormat::Pretty);
         assert!(!config.embedded_worker);
+        assert_eq!(config.user_name, None);
     }
 
     #[test]
@@ -420,6 +426,7 @@ mod tests {
             ("IGLOO_LEASE_TTL_SECONDS", "60"),
             ("IGLOO_COMMAND_TIMEOUT_SECONDS", "20"),
             ("IGLOO_LOG_FORMAT", "json"),
+            ("IGLOO_USER_NAME", "Ada Lovelace"),
             ("IGLOO_EMBEDDED_WORKER", "true"),
         ]))
         .expect("valid");
@@ -430,6 +437,7 @@ mod tests {
         assert_eq!(config.lease_ttl, Duration::from_secs(60));
         assert_eq!(config.command_timeout, Duration::from_secs(20));
         assert_eq!(config.log_format, LogFormat::Json);
+        assert_eq!(config.user_name.as_deref(), Some("Ada Lovelace"));
         assert!(config.embedded_worker);
     }
 

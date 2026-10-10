@@ -20,9 +20,9 @@ use reqwest::Url;
 use self::commands::CreateWorkspaceHandler;
 pub use self::commands::{
     CreateWorkspace, DeleteWorkspace, RecordWorkspaceEnded, RecordWorkspaceRunning,
-    RecordWorkspaceSandbox, RecordWorkspaceSeal, RecordWorkspaceSealing, RecordWorkspaceStopping,
-    StartWorkspace, StopIdleWorkspace, StopWorkspace, TouchWorkspace, WorkspaceQueries,
-    WorkspaceSecrets,
+    RecordWorkspaceSandbox, RecordWorkspaceSeal, RecordWorkspaceSealing, RecordWorkspaceSetup,
+    RecordWorkspaceStopping, StartWorkspace, StopIdleWorkspace, StopWorkspace, TouchWorkspace,
+    WorkspaceQueries, WorkspaceSecrets,
 };
 use self::lifecycle::Lifecycle;
 use self::reactors::{FollowSandboxes, FollowSeals};
@@ -70,11 +70,12 @@ impl Extension for WorkspaceModule {
         });
         platform.reactor(SetUpWorkspaces {
             setup: WorkspaceSetup::new(self.git_base),
-            workspaces,
+            workspaces: workspaces.clone(),
             repos: platform.store::<Repo>()?,
         });
         platform.reactor(ReportSetups {
             jobs: platform.store::<Job>()?,
+            workspaces,
         });
         Ok(())
     }
@@ -181,10 +182,18 @@ impl WorkspaceModule {
         ))?;
         platform.command(EntityHandler::infallible(
             Arc::clone(store),
-            clock,
+            Arc::clone(&clock),
             |command: &RecordWorkspaceEnded| command.workspace,
             |workspace: &mut Workspace, command: &RecordWorkspaceEnded, _| {
                 workspace.sandbox_ended(command.sandbox);
+            },
+        ))?;
+        platform.command(EntityHandler::infallible(
+            Arc::clone(store),
+            clock,
+            |command: &RecordWorkspaceSetup| command.workspace,
+            |workspace: &mut Workspace, command: &RecordWorkspaceSetup, _| {
+                workspace.setup_ended(command.sandbox, command.job, command.outcome.clone());
             },
         ))?;
         Ok(())

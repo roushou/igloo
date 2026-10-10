@@ -99,6 +99,17 @@ mod tests {
         std::mem::take(&mut *seen)
     }
 
+    #[tokio::test]
+    async fn me_reads_the_callers_identity() {
+        let body = json!({ "id": "usr_1", "display_name": "Ada" }).to_string();
+        let seen = scripted(vec![(200, body)], |client| async move {
+            let me = client.me().await.expect("me");
+            assert_eq!((me.id.as_str(), me.display_name.as_str()), ("usr_1", "Ada"));
+        })
+        .await;
+        assert_eq!(seen, ["GET /v1/me HTTP/1.1"]);
+    }
+
     fn workspace(id: &str, repo: &str, phase: &str, active: &str) -> serde_json::Value {
         let mut workspace = json!({
             "id": id, "owner": "usr_1", "repo": repo, "branch": "main", "phase": phase,

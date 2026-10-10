@@ -18,16 +18,33 @@ use crate::ports::{CorrelationId, IdGeneratorExt};
 pub struct DevToken {
     token: Arc<str>,
     actor: Actor,
+    display_name: Arc<str>,
 }
 
 impl DevToken {
-    /// Requests bearing `token` act as `actor`.
+    /// The name shown for the person when none was set.
+    pub const DEFAULT_DISPLAY_NAME: &'static str = "Owner";
+
+    /// Requests bearing `token` act as `actor`, shown as [`Self::DEFAULT_DISPLAY_NAME`].
     #[must_use]
     pub fn new(token: impl Into<Arc<str>>, actor: Actor) -> Self {
         Self {
             token: token.into(),
             actor,
+            display_name: Arc::from(Self::DEFAULT_DISPLAY_NAME),
         }
+    }
+
+    /// Shows the person as `name`.
+    #[must_use]
+    pub fn with_display_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        self.display_name = name.into();
+        self
+    }
+
+    /// The name shown for the person the token stands for.
+    pub(in crate::inbound) fn display_name(&self) -> &str {
+        &self.display_name
     }
 
     pub(in crate::inbound) fn authenticate(&self, header: Option<&str>) -> Option<Actor> {

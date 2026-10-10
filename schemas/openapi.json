@@ -760,6 +760,35 @@
         }
       }
     },
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Says who the caller is: the person the token stands for (for an agent, the person it acts\nfor), so a client can tell which `owner`, `by` or `author` is the viewer.",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/repos": {
       "get": {
         "tags": [
@@ -2407,7 +2436,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Hands a task back, as the person who took it over, once its last turn ended and its commits\nbecame a revision (until then the request is refused with `task.turn_running`). The sandbox\nis read for what the person changed, without touching it, and the task's next turn is asked\nabout the commits they added and the changes they left uncommitted. Uncommitted work stays in\nplace. Handing back a task already being handed back changes nothing.",
+        "summary": "Hands a task back, as any person (so a forgotten take-over can be released), once its last\nturn ended and its commits became a revision (until then the request is refused with\n`task.turn_running`). The sandbox is read for what the person changed, without touching it, and the task's next turn is asked\nabout the commits they added and the changes they left uncommitted. Uncommitted work stays in\nplace. Handing back a task already being handed back changes nothing.",
         "operationId": "handBackTask",
         "parameters": [
           {
@@ -3616,6 +3645,24 @@
           "newest"
         ]
       },
+      "MeResource": {
+        "type": "object",
+        "description": "The person a request's token stands for.",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "The name to show for the person; never empty."
+          },
+          "id": {
+            "type": "string",
+            "description": "The person's id (`usr_...`), as it appears in `owner`, `by` and `author` fields."
+          }
+        }
+      },
       "MediaType": {
         "type": "string",
         "description": "How a layer blob is encoded.",
@@ -4183,6 +4230,39 @@
             "description": "The names, sorted."
           }
         }
+      },
+      "SetupResource": {
+        "type": "object",
+        "description": "How setting up a workspace's sandbox ended: pointing `origin` at Igloo and installing the\nrepository's dotfiles. A failed setup leaves the workspace usable.",
+        "required": [
+          "state",
+          "job"
+        ],
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The job that ran it (`job_...`); `GET /v1/jobs/{id}/logs` has its output."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed; absent when it succeeded."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState",
+            "description": "Whether it worked."
+          }
+        }
+      },
+      "SetupState": {
+        "type": "string",
+        "description": "Whether setting up a workspace's sandbox worked.",
+        "enum": [
+          "succeeded",
+          "failed"
+        ]
       },
       "SnapshotResource": {
         "type": "object",
@@ -5063,6 +5143,17 @@
               "null"
             ],
             "description": "Its sandbox, while it has one. Its terminal is the sandbox's."
+          },
+          "setup": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SetupResource",
+                "description": "How setting up its sandbox ended; absent until the setup job ended."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "snapshot": {
             "type": [

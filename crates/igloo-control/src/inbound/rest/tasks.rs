@@ -189,9 +189,9 @@ pub(crate) async fn take_over_task(
     load(state, task).await
 }
 
-/// Hands a task back, as the person who took it over, once its last turn ended and its commits
-/// became a revision (until then the request is refused with `task.turn_running`). The sandbox
-/// is read for what the person changed, without touching it, and the task's next turn is asked
+/// Hands a task back, as any person (so a forgotten take-over can be released), once its last
+/// turn ended and its commits became a revision (until then the request is refused with
+/// `task.turn_running`). The sandbox is read for what the person changed, without touching it, and the task's next turn is asked
 /// about the commits they added and the changes they left uncommitted. Uncommitted work stays in
 /// place. Handing back a task already being handed back changes nothing.
 #[utoipa::path(

@@ -1,5 +1,6 @@
 use igloo_api::change::{ApproveRequest, ChangeResource, CommentRequest, OpenChangeRequest};
 use igloo_api::job::{ExecRequest, JobResource};
+use igloo_api::me::MeResource;
 use igloo_api::problem::Problem;
 use igloo_api::repo::{
     DotfilesResource, RegisterRepoRequest, RepoResource, RepoSnapshotRequest, RepoSnapshotResource,
@@ -324,10 +325,16 @@ impl Client {
             .await
     }
 
-    /// Hands a taken-over task back; its next turn is asked about what the person changed.
+    /// Hands a taken-over task back, whoever took it over; its next turn is asked about what
+    /// the person changed.
     pub async fn hand_back_task(&self, id: &str) -> Result<TaskResource, Error> {
         self.send(self.request(Method::POST, &format!("v1/tasks/{id}/hand-back"))?)
             .await
+    }
+
+    /// Who the token stands for: the person's id and display name.
+    pub async fn me(&self) -> Result<MeResource, Error> {
+        self.send(self.request(Method::GET, "v1/me")?).await
     }
 
     /// Opens a workspace on a branch of a repository; it starts at once.

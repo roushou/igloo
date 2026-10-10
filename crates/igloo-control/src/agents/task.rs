@@ -327,7 +327,7 @@ pub enum TaskError {
     /// Nobody has taken the task over.
     #[error("the task is not taken over")]
     NotTakenOver,
-    /// Only the person who took the task over hands it back or types in its terminal.
+    /// Only the person who took the task over types in its terminal.
     #[error("the task was taken over by someone else")]
     NotYourTakeover,
     /// The person handed the task back; its sandbox is no longer theirs to type in.
@@ -483,19 +483,17 @@ impl Task {
         }
     }
 
-    /// Hands the task back for the person who took it over, once no turn is in flight: the
-    /// sandbox is read for what they changed, then the next turn is asked about it. Handing
-    /// back a task that is being handed back records nothing.
+    /// Hands the task back, once no turn is in flight: the sandbox is read for what the person
+    /// who took it over changed, then the next turn is asked about it. Any person may hand a
+    /// task back, so a forgotten take-over can be released; typing stays with the holder.
+    /// Handing back a task that is being handed back records nothing.
     pub fn hand_back(&mut self, by: Actor) -> Result<(), TaskError> {
-        let Actor::Human { user } = by else {
+        if !matches!(by, Actor::Human { .. }) {
             return Err(TaskError::NotAPerson);
-        };
-        let Some(Takeover { by: holder, step }) = self.takeover else {
+        }
+        let Some(Takeover { step, .. }) = self.takeover else {
             return Err(TaskError::NotTakenOver);
         };
-        if holder != user {
-            return Err(TaskError::NotYourTakeover);
-        }
         if step != Handback::Held {
             return Ok(());
         }
@@ -1829,14 +1827,31 @@ mod tests {
             .try_when(|task, _| task.hand_back(person(7)))
             .then_error("task.turn_running");
         S::given(taken_over(revised(10)))
-            .try_when(|task, _| task.hand_back(person(8)))
-            .then_error("task.not_your_takeover");
-        S::given(taken_over(revised(10)))
             .try_when(|task, _| task.hand_back(agent_actor()))
             .then_error("task.not_a_person");
         S::given(revised(10))
             .try_when(|task, _| task.hand_back(person(7)))
             .then_error("task.not_taken_over");
+    }
+
+    #[test]
+    fn any_person_may_hand_back_but_only_the_holder_types() {
+        S::given(taken_over(working(10)))
+            .try_when(|task, _| task.hand_back(person(8)))
+            .then_error("task.turn_running");
+        let released = S::given(taken_over(revised(10)))
+            .try_when(|task, _| task.hand_back(person(8)))
+            .then([TaskEvent::HandBackRequested]);
+        assert_eq!(
+            released.state().takeover(),
+            Some(TakeoverPhase::HandingBack)
+        );
+        assert_eq!(
+            S::given(taken_over(revised(10)))
+                .state()
+                .writable_by(person(8)),
+            Err(TaskError::NotYourTakeover)
+        );
     }
 
     #[test]

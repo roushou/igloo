@@ -124,6 +124,11 @@ async fn a_person_watches_takes_over_and_hands_back_with_what_they_changed() {
     let taken = client.take_over_task(&task.id).await.expect("take over");
     let takeover = taken.takeover.expect("taken over");
     assert_eq!(takeover.phase, TakeoverPhase::Paused);
+    let me = client.me().await.expect("me");
+    assert_eq!(
+        takeover.by, me.id,
+        "/v1/me names the person who took it over"
+    );
     let (_, code) = shell(client, &sandbox, "test ! -e typed-by-a-watcher").await;
     assert_eq!(code, 0, "a read-only terminal wrote to the sandbox");
     let (_, code) = shell(

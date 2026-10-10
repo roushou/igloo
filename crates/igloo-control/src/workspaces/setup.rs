@@ -9,13 +9,13 @@ use igloo_core::job::{Job, JobEvent, JobSpec, JobTimeout};
 use igloo_core::process::{Argv, EnvVars};
 use igloo_core::repo::{Repo, RepoId};
 use igloo_core::sandbox::SandboxId;
-use igloo_core::workspace::{Workspace, WorkspaceEvent};
+use igloo_core::workspace::{SetupOutcome, Workspace, WorkspaceEvent};
 use igloo_core::{Actor, Entity as _, Resource as _, SystemComponent, ValidationErrors};
 use jiff::SignedDuration;
 use reqwest::Url;
 use std::collections::BTreeSet;
 
-use super::commands::WorkspaceQueries;
+use super::commands::{RecordWorkspaceSetup, WorkspaceQueries};
 use crate::app::{AppError, CommandBus, Reactor, RequestContext};
 use crate::platform::SubmitJob;
 use crate::ports::{EntityStore, EventEnvelope};
@@ -178,10 +178,12 @@ impl Reactor for SetUpWorkspaces {
     }
 }
 
-/// Reports a setup job that did not succeed: the owner's workspace is still usable, and the
-/// job's output is in the job's logs and in `.git/igloo-setup.log` of the checkout.
+/// Records how a workspace's setup job ended on the workspace, so a failed setup shows: the
+/// owner's workspace is still usable, and the job's output is in the job's logs and in
+/// `.git/igloo-setup.log` of the checkout.
 pub(super) struct ReportSetups {
     pub(super) jobs: Arc<dyn EntityStore<Job>>,
+    pub(super) workspaces: WorkspaceQueries,
 }
 
 #[async_trait]
@@ -190,26 +192,52 @@ impl Reactor for ReportSetups {
         "workspace.report_setup"
     }
 
-    async fn react(&self, event: &EventEnvelope, _bus: &CommandBus) -> Result<(), AppError> {
+    async fn react(&self, event: &EventEnvelope, bus: &CommandBus) -> Result<(), AppError> {
         let Some(id) = event.subject_as::<Job>() else {
             return Ok(());
         };
-        let ending = match event.decode::<JobEvent>()? {
-            JobEvent::Finished { exit_code: 0 } => return Ok(()),
-            JobEvent::Finished { exit_code } => format!("exited with {exit_code}"),
-            JobEvent::Failed { reason } => format!("did not complete: {reason}"),
+        let (outcome, ending) = match event.decode::<JobEvent>()? {
+            JobEvent::Finished { exit_code: 0 } => (SetupOutcome::Succeeded, None),
+            JobEvent::Finished { exit_code } => {
+                let reason = format!("exited with code {exit_code}");
+                (
+                    SetupOutcome::Failed {
+                        reason: reason.clone(),
+                    },
+                    Some(reason),
+                )
+            }
+            JobEvent::Failed { reason } => {
+                let reason = format!("did not complete: {reason}");
+                (
+                    SetupOutcome::Failed {
+                        reason: reason.clone(),
+                    },
+                    Some(reason),
+                )
+            }
             _ => return Ok(()),
         };
         let Some(job) = self.jobs.load(id).await? else {
             return Ok(());
         };
-        if WorkspaceSetup::is_setup(job.entity().spec()) {
-            tracing::warn!(
-                job = %id,
-                sandbox = %job.entity().spec().sandbox(),
-                "workspace setup {ending}; see the job's logs"
-            );
+        let sandbox = job.entity().spec().sandbox();
+        if !WorkspaceSetup::is_setup(job.entity().spec()) {
+            return Ok(());
         }
+        if let Some(ending) = ending {
+            tracing::warn!(job = %id, %sandbox, "workspace setup {ending}; see the job's logs");
+        }
+        let Some(workspace) = self.workspaces.with_sandbox(sandbox).await? else {
+            return Ok(());
+        };
+        let command = RecordWorkspaceSetup {
+            workspace: workspace.id(),
+            sandbox,
+            job: id,
+            outcome,
+        };
+        bus.dispatch(command, context(event)).await?;
         Ok(())
     }
 }

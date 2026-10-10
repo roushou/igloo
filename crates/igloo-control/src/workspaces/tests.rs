@@ -690,3 +690,193 @@ async fn a_repository_without_dotfiles_still_gets_its_origin_set() {
     assert!(!env.contains_key("IGLOO_DOTFILES_INSTALL"));
     running.stop().await;
 }
+
+impl Running {
+    /// The setup job of `sandbox`, once submitted.
+    async fn setup_job(&self, sandbox: SandboxId) -> igloo_core::job::JobId {
+        eventually(async || {
+            self.setup_jobs()
+                .await
+                .iter()
+                .any(|(job_sandbox, _)| *job_sandbox == sandbox)
+        })
+        .await;
+        for job in self.stores.jobs.all().await.expect("jobs") {
+            if setup::WorkspaceSetup::is_setup(job.spec()) && job.spec().sandbox() == sandbox {
+                return igloo_core::Entity::id(&job);
+            }
+        }
+        panic!("no setup job");
+    }
+
+    /// Does what the worker would: leases `job`, starts it and reports `exit_code`.
+    async fn finish_job(&self, sandbox: SandboxId, job: igloo_core::job::JobId, exit_code: i32) {
+        use crate::platform::{FinishJob, LeaseJob, StartJob};
+        let worker = self
+            .stores
+            .sandboxes
+            .load(sandbox)
+            .await
+            .expect("load")
+            .expect("sandbox")
+            .entity()
+            .status()
+            .worker()
+            .expect("placed");
+        let lease = self
+            .bus
+            .dispatch(
+                LeaseJob {
+                    job,
+                    worker,
+                    duration: jiff::SignedDuration::from_secs(30),
+                },
+                context(),
+            )
+            .await
+            .expect("lease");
+        let token = lease.token();
+        self.bus
+            .dispatch(StartJob { job, token }, context())
+            .await
+            .expect("start job");
+        self.bus
+            .dispatch(
+                FinishJob {
+                    job,
+                    token,
+                    exit_code,
+                },
+                context(),
+            )
+            .await
+            .expect("finish job");
+    }
+}
+
+#[tokio::test]
+async fn a_setup_that_fails_is_recorded_on_the_workspace_which_stays_usable() {
+    use igloo_core::workspace::{SetupOutcome, SetupResult};
+    let running = start().await;
+    let (id, sandbox) = running.running().await;
+    assert_eq!(running.workspace(id).await.status().setup(), None);
+
+    let job = running.setup_job(sandbox).await;
+    running.finish_job(sandbox, job, 1).await;
+    eventually(async || running.workspace(id).await.status().setup().is_some()).await;
+    let workspace = running.workspace(id).await;
+    assert_eq!(
+        workspace.status().setup(),
+        Some(&SetupResult {
+            job,
+            outcome: SetupOutcome::Failed {
+                reason: "exited with code 1".to_owned()
+            },
+        })
+    );
+    assert_eq!(workspace.status().phase(), WorkspacePhase::Running);
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn a_setup_that_works_is_recorded_as_succeeded() {
+    use igloo_core::workspace::SetupOutcome;
+    let running = start().await;
+    let (id, sandbox) = running.running().await;
+    let job = running.setup_job(sandbox).await;
+    running.finish_job(sandbox, job, 0).await;
+    eventually(async || running.workspace(id).await.status().setup().is_some()).await;
+    let workspace = running.workspace(id).await;
+    let setup = workspace.status().setup().expect("recorded");
+    assert_eq!((setup.job, &setup.outcome), (job, &SetupOutcome::Succeeded));
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn a_setup_job_that_does_not_complete_is_recorded_as_failed() {
+    use crate::platform::{FailJob, LeaseJob};
+    use igloo_core::job::JobFailure;
+    use igloo_core::workspace::SetupOutcome;
+    let running = start().await;
+    let (id, sandbox) = running.running().await;
+    let job = running.setup_job(sandbox).await;
+    let worker = running
+        .stores
+        .sandboxes
+        .load(sandbox)
+        .await
+        .expect("load")
+        .expect("sandbox")
+        .entity()
+        .status()
+        .worker()
+        .expect("placed");
+    let lease = running
+        .bus
+        .dispatch(
+            LeaseJob {
+                job,
+                worker,
+                duration: jiff::SignedDuration::from_secs(30),
+            },
+            context(),
+        )
+        .await
+        .expect("lease");
+    running
+        .bus
+        .dispatch(
+            FailJob {
+                job,
+                token: lease.token(),
+                reason: JobFailure::TimedOut,
+            },
+            context(),
+        )
+        .await
+        .expect("fail");
+    eventually(async || running.workspace(id).await.status().setup().is_some()).await;
+    let workspace = running.workspace(id).await;
+    let SetupOutcome::Failed { reason } = &workspace.status().setup().expect("recorded").outcome
+    else {
+        panic!("not failed");
+    };
+    assert!(reason.starts_with("did not complete"), "{reason}");
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn jobs_that_are_not_setup_jobs_record_nothing() {
+    let running = start().await;
+    let (id, sandbox) = running.running().await;
+    let job = running.setup_job(sandbox).await;
+    // The setup job is the only one the workspace's reactor follows: another job of the same
+    // sandbox ending leaves the workspace's setup alone.
+    let other = running
+        .bus
+        .dispatch(
+            crate::platform::SubmitJob {
+                spec: igloo_core::job::JobSpec::Execute {
+                    sandbox,
+                    argv: igloo_core::process::Argv::try_from(vec!["true".to_owned()])
+                        .expect("argv"),
+                    env: igloo_core::process::EnvVars::from_pairs(Vec::<(String, String)>::new())
+                        .expect("env"),
+                    secrets: std::collections::BTreeSet::new(),
+                    timeout: igloo_core::job::JobTimeout::try_from(
+                        jiff::SignedDuration::from_secs(60),
+                    )
+                    .expect("timeout"),
+                },
+            },
+            context(),
+        )
+        .await
+        .expect("submit");
+    running.finish_job(sandbox, other, 7).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(running.workspace(id).await.status().setup(), None);
+    running.finish_job(sandbox, job, 0).await;
+    eventually(async || running.workspace(id).await.status().setup().is_some()).await;
+    running.stop().await;
+}

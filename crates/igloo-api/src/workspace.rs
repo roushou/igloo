@@ -30,6 +30,31 @@ pub enum WorkspacePhase {
     Stopped,
 }
 
+/// Whether setting up a workspace's sandbox worked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SetupState {
+    /// The setup job exited 0.
+    Succeeded,
+    /// The setup job exited non-zero or did not complete; see `reason`.
+    Failed,
+}
+
+/// How setting up a workspace's sandbox ended: pointing `origin` at Igloo and installing the
+/// repository's dotfiles. A failed setup leaves the workspace usable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct SetupResource {
+    /// Whether it worked.
+    pub state: SetupState,
+    /// The job that ran it (`job_...`); `GET /v1/jobs/{id}/logs` has its output.
+    pub job: String,
+    /// Why it failed; absent when it succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// A workspace.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[non_exhaustive]
@@ -53,6 +78,9 @@ pub struct WorkspaceResource {
     /// When a person last used it.
     #[schema(value_type = String, format = DateTime)]
     pub last_activity: Timestamp,
+    /// How setting up its sandbox ended; absent until the setup job ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<SetupResource>,
     /// When it was created.
     #[schema(value_type = String, format = DateTime)]
     pub created_at: Timestamp,
@@ -84,6 +112,20 @@ impl From<domain::WorkspacePhase> for WorkspacePhase {
     }
 }
 
+impl From<&domain::SetupResult> for SetupResource {
+    fn from(result: &domain::SetupResult) -> Self {
+        let (state, reason) = match &result.outcome {
+            domain::SetupOutcome::Succeeded => (SetupState::Succeeded, None),
+            domain::SetupOutcome::Failed { reason } => (SetupState::Failed, Some(reason.clone())),
+        };
+        Self {
+            state,
+            job: result.job.to_string(),
+            reason,
+        }
+    }
+}
+
 impl From<&Workspace> for WorkspaceResource {
     fn from(workspace: &Workspace) -> Self {
         let spec = workspace.spec();
@@ -97,6 +139,7 @@ impl From<&Workspace> for WorkspaceResource {
             sandbox: status.sandbox().map(|sandbox| sandbox.to_string()),
             snapshot: status.snapshot().map(|snapshot| snapshot.to_string()),
             last_activity: status.last_activity(),
+            setup: status.setup().map(SetupResource::from),
             created_at: workspace.created_at(),
         }
     }

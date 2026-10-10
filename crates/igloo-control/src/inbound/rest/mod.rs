@@ -7,6 +7,7 @@ pub(super) mod changes;
 mod events;
 mod idempotency;
 mod jobs;
+mod me;
 mod problem;
 pub(super) mod repos;
 pub(super) mod runs;
@@ -251,6 +252,7 @@ impl RestApi {
         OpenApiRouter::with_openapi(ApiDoc::openapi())
             .routes(routes!(sandboxes::create, sandboxes::list))
             .routes(routes!(sandboxes::get))
+            .routes(routes!(me::get))
             .routes(routes!(workers::list))
             .routes(routes!(storage::get))
             .routes(routes!(sandboxes::stop))

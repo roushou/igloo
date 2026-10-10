@@ -178,7 +178,10 @@ impl Server {
         };
         let collector = LayerCollector::new(&builder, builder.bus())?;
         let mirror = ForgeMirror::new(&builder)?;
-        let token = DevToken::new(config.dev_token.clone(), actor);
+        let mut token = DevToken::new(config.dev_token.clone(), actor);
+        if let Some(name) = &config.user_name {
+            token = token.with_display_name(name.as_str());
+        }
         let git = GitHttp::new(
             &builder,
             builder.bus(),

@@ -7,6 +7,7 @@ use jiff::SignedDuration;
 use serde::{Deserialize, Serialize};
 
 use crate::actor::UserId;
+use crate::job::JobId;
 use crate::repo::{BranchName, RepoId, SecretName};
 use crate::sandbox::SandboxId;
 use crate::seal::SealId;
@@ -68,6 +69,32 @@ pub struct WorkspaceStatus {
     snapshot: Option<SnapshotId>,
     secrets: BTreeSet<SecretName>,
     last_activity: Timestamp,
+    setup: Option<SetupResult>,
+}
+
+/// How setting up a workspace's sandbox ended: the job that did it and whether it worked.
+///
+/// Invariant: a failed setup leaves the workspace usable; it only tells the person that their
+/// checkout or dotfiles may not be as configured.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetupResult {
+    /// The job that ran the setup; its logs hold the output.
+    pub job: JobId,
+    /// How it ended.
+    pub outcome: SetupOutcome,
+}
+
+/// Whether a workspace's setup worked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SetupOutcome {
+    /// The setup job exited 0.
+    Succeeded,
+    /// The setup job exited non-zero or did not complete.
+    Failed {
+        /// Why, in a short sentence.
+        reason: String,
+    },
 }
 
 /// Where a workspace is.
@@ -193,6 +220,15 @@ pub enum WorkspaceEvent {
     ActivityRecorded {
         /// When.
         at: Timestamp,
+    },
+    /// The job setting up the sandbox ended.
+    SetupRecorded {
+        /// The sandbox that was set up.
+        sandbox: SandboxId,
+        /// The setup job.
+        job: JobId,
+        /// How it ended.
+        outcome: SetupOutcome,
     },
 }
 
@@ -362,6 +398,19 @@ impl Workspace {
         self.record(WorkspaceEvent::SandboxEnded { sandbox });
     }
 
+    /// Records how the job setting up `sandbox` ended. Ignored unless `sandbox` is the
+    /// workspace's sandbox, and when the same result is already recorded.
+    pub fn setup_ended(&mut self, sandbox: SandboxId, job: JobId, outcome: SetupOutcome) {
+        let result = SetupResult { job, outcome };
+        if self.progress.sandbox() == Some(sandbox) && self.status.setup.as_ref() != Some(&result) {
+            self.record(WorkspaceEvent::SetupRecorded {
+                sandbox,
+                job: result.job,
+                outcome: result.outcome,
+            });
+        }
+    }
+
     /// Records that a person used the running workspace at `now`.
     pub fn touch(&mut self, now: Timestamp) {
         if matches!(self.progress, Progress::Running { .. }) {
@@ -405,6 +454,7 @@ impl Workspace {
                 snapshot: None,
                 secrets: BTreeSet::new(),
                 last_activity: at,
+                setup: None,
             },
             progress: Progress::Opening,
             deleted: false,
@@ -497,6 +547,13 @@ impl WorkspaceStatus {
     pub const fn last_activity(&self) -> Timestamp {
         self.last_activity
     }
+
+    /// How setting up its latest unsealed sandbox ended, once it did: a failure here means the
+    /// checkout or dotfiles may not be as configured.
+    #[must_use]
+    pub const fn setup(&self) -> Option<&SetupResult> {
+        self.setup.as_ref()
+    }
 }
 
 impl WorkspacePhase {
@@ -533,6 +590,7 @@ impl Event for WorkspaceEvent {
             Self::SandboxStopRequested => "igloo.workspace.sandbox_stop_requested",
             Self::SandboxEnded { .. } => "igloo.workspace.sandbox_ended",
             Self::ActivityRecorded { .. } => "igloo.workspace.activity_recorded",
+            Self::SetupRecorded { .. } => "igloo.workspace.setup_recorded",
         }
     }
 }
@@ -591,6 +649,9 @@ impl Entity for Workspace {
             WorkspaceEvent::SandboxCreated { sandbox, secrets } => {
                 self.progress = Progress::Booting { sandbox: *sandbox };
                 self.status.secrets.clone_from(secrets);
+                if self.status.snapshot.is_none() {
+                    self.status.setup = None;
+                }
             }
             WorkspaceEvent::SandboxRunning { sandbox, at } => {
                 self.progress = Progress::Running { sandbox: *sandbox };
@@ -625,6 +686,12 @@ impl Entity for Workspace {
             }
             WorkspaceEvent::ActivityRecorded { at } => {
                 self.status.last_activity = self.status.last_activity.max(*at);
+            }
+            WorkspaceEvent::SetupRecorded { job, outcome, .. } => {
+                self.status.setup = Some(SetupResult {
+                    job: *job,
+                    outcome: outcome.clone(),
+                });
             }
         }
         self.status.phase = self.progress.phase();
@@ -1041,9 +1108,110 @@ mod tests {
         assert_eq!(phase(&gone), WorkspacePhase::Stopped);
     }
 
+    fn failed_setup() -> WorkspaceEvent {
+        WorkspaceEvent::SetupRecorded {
+            sandbox: id(10),
+            job: id(40),
+            outcome: SetupOutcome::Failed {
+                reason: "exited with code 1".to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn the_setup_outcome_of_the_current_sandbox_is_recorded_once() {
+        let recorded = S::given(running())
+            .when(|workspace, _| {
+                workspace.setup_ended(id(10), id(40), SetupOutcome::Succeeded);
+            })
+            .then([WorkspaceEvent::SetupRecorded {
+                sandbox: id(10),
+                job: id(40),
+                outcome: SetupOutcome::Succeeded,
+            }]);
+        assert_eq!(
+            recorded.state().status().setup(),
+            Some(&SetupResult {
+                job: id(40),
+                outcome: SetupOutcome::Succeeded,
+            })
+        );
+        recorded
+            .when(|workspace, _| workspace.setup_ended(id(10), id(40), SetupOutcome::Succeeded))
+            .then_no_events();
+    }
+
+    #[test]
+    fn a_failed_setup_is_visible_and_the_workspace_stays_usable() {
+        let failed = S::given(running())
+            .when(|workspace, _| {
+                workspace.setup_ended(
+                    id(10),
+                    id(40),
+                    SetupOutcome::Failed {
+                        reason: "exited with code 1".to_owned(),
+                    },
+                );
+            })
+            .then([failed_setup()]);
+        assert_eq!(phase(&failed), WorkspacePhase::Running);
+        assert!(matches!(
+            failed.state().status().setup(),
+            Some(SetupResult {
+                outcome: SetupOutcome::Failed { .. },
+                ..
+            })
+        ));
+        failed.plan().then_recheck(SignedDuration::from_hours(2));
+    }
+
+    #[test]
+    fn the_setup_of_another_sandbox_is_ignored_and_a_sandbox_without_a_seal_clears_the_last() {
+        S::given(running())
+            .when(|workspace, _| workspace.setup_ended(id(99), id(40), SetupOutcome::Succeeded))
+            .then_no_events();
+        S::given(vec![created()])
+            .when(|workspace, _| workspace.setup_ended(id(10), id(40), SetupOutcome::Succeeded))
+            .then_no_events();
+
+        let mut events = running();
+        events.extend([
+            failed_setup(),
+            WorkspaceEvent::StopRequested {
+                generation: Generation::INITIAL.next(),
+            },
+            WorkspaceEvent::Sealing { seal: id(30) },
+            WorkspaceEvent::SealFailed,
+            WorkspaceEvent::SandboxStopRequested,
+            WorkspaceEvent::SandboxEnded { sandbox: id(10) },
+        ]);
+        let stopped = S::given(events.clone());
+        assert!(
+            stopped.state().status().setup().is_some(),
+            "kept while the workspace is stopped"
+        );
+        events.extend([
+            WorkspaceEvent::StartRequested {
+                generation: Generation::INITIAL.next().next(),
+                at: S::NOW,
+            },
+            WorkspaceEvent::SandboxCreated {
+                sandbox: id(11),
+                secrets: BTreeSet::new(),
+            },
+        ]);
+        let reopened = S::given(events);
+        assert_eq!(
+            reopened.state().status().setup(),
+            None,
+            "nothing was sealed, so the new sandbox is set up again"
+        );
+    }
+
     #[test]
     fn events_serialize_stably() {
         let mut events = stopped();
+        events.push(failed_setup());
         events.push(WorkspaceEvent::SealFailed);
         events.push(WorkspaceEvent::ActivityRecorded { at: S::NOW });
         insta::assert_json_snapshot!(events);

@@ -14,6 +14,7 @@ whether it embeds a worker.
 | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | `IGLOO_DATABASE_URL`            | required                             | Postgres URL, `postgres://` or `postgresql://`.                                                  |
 | `IGLOO_DEV_TOKEN`               | required                             | Bearer token for REST and MCP; maps to one human with every permission.                          |
+| `IGLOO_USER_NAME`               | `Owner`                              | The name `GET /v1/me` reports for that human, which the console shows.                           |
 | `IGLOO_JOIN_TOKEN`              | required                             | Token workers join with.                                                                         |
 | `IGLOO_BLOB_KEY`                | required                             | Signs presigned blob URLs. At least 32 bytes.                                                    |
 | `IGLOO_SECRETS_KEY`             | required                             | Encrypts repository secrets. At least 32 bytes. Changing it loses every secret.                  |

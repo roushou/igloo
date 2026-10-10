@@ -335,8 +335,9 @@ composition.rs  Server: the only place naming concrete adapters
   The first time a workspace's sandbox runs (not on a resume), a reactor submits a setup job in it:
   `origin` is pointed at Igloo's git endpoint and the repository's dotfiles, a `Repo` setting
   (`PUT /v1/repos/{id}/dotfiles`), are cloned and installed. The job carries no credential, runs
-  at most once per checkout (a marker in `.git`) and its failure is reported by the failed job, not
-  by the workspace. See `docs/workspaces.md`.
+  at most once per checkout (a marker in `.git`) and its outcome is recorded on the workspace (a
+  `SetupRecorded` event; `setup` in the workspace resource), so a failed install shows without the
+  workspace failing. See `docs/workspaces.md`.
 
 ## 8. Worker
 
@@ -510,7 +511,8 @@ terminal in a workspace over the sandbox terminal endpoint (`docs/workspaces.md`
 an agent). While a task is taken over no turn starts: a running turn finishes and its commits are
 still collected and published, the person's terminal in the sandbox is writable, and the sandbox
 stays running until the task ends (it is never sealed or reclaimed for idleness). Handing back
-(`/hand-back`, `task.hand_back`, `igloo task hand-back`) is allowed once the last turn became a
+(`/hand-back`, `task.hand_back`, `igloo task hand-back`), by any person so a forgotten take-over can be
+released (typing stays with the one who took over), is allowed once the last turn became a
 revision: a read-only job in the sandbox lists the commits added since the task's last commit
 carrying its `Igloo-Task` trailer, their diff stat and the uncommitted changes, and the next turn's
 prompt names them. Uncommitted work stays in place and is committed by the next collection.

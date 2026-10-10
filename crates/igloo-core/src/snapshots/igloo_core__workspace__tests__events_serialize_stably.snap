@@ -44,6 +44,15 @@ expression: events
     "sandbox": "sbx_0000000000000000000000000a"
   },
   {
+    "type": "setup_recorded",
+    "sandbox": "sbx_0000000000000000000000000a",
+    "job": "job_00000000000000000000000018",
+    "outcome": {
+      "type": "failed",
+      "reason": "exited with code 1"
+    }
+  },
+  {
     "type": "seal_failed"
   },
   {

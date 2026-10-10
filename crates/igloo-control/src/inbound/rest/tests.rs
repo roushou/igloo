@@ -78,8 +78,13 @@ fn api_parts() -> (
         user: Id::from_uuid(Uuid::from_u128(7)),
     };
     let urls = blob_urls(Arc::clone(&builder.ports().clock));
-    let api =
-        RestApi::new(&builder, builder.bus(), DevToken::new(TOKEN, actor), urls).expect("api");
+    let api = RestApi::new(
+        &builder,
+        builder.bus(),
+        DevToken::new(TOKEN, actor).with_display_name("Ada"),
+        urls,
+    )
+    .expect("api");
     let _platform = builder.build();
     (api.router(), runs, repos, stores)
 }
@@ -1793,4 +1798,21 @@ async fn a_workspace_needs_an_existing_repository_and_branch() {
         .send(&router)
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn me_names_the_person_the_token_stands_for() {
+    let router = api();
+    let (status, me, _) = Call::new(Method::GET, "/v1/me").send(&router).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    let user: igloo_core::UserId = Id::from_uuid(Uuid::from_u128(7));
+    assert_eq!(me["id"], user.to_string());
+    assert_eq!(me["display_name"], "Ada");
+
+    let (status, problem, _) = Call::new(Method::GET, "/v1/me")
+        .anonymous()
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(problem["code"], "auth.unauthenticated");
 }

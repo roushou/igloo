@@ -79,8 +79,9 @@ igloo repo dotfiles clear --repo <repo id>
 The repository URL starts with `https://`, `http://`, `ssh://` or `git@`, and the sandbox must be
 able to clone it (a private repository needs credentials the sandbox has). The install command
 is a shell command. A failing install does not fail the workspace: the setup job fails instead,
-the server logs `workspace setup ... see the job's logs`, and the output is in the checkout at
-`.git/igloo-setup.log`. The same job points `origin` at Igloo; it runs once per workspace.
+the workspace records the outcome (`setup` in `GET /v1/workspaces/{id}`, shown on its console
+page with a link to the job), the server logs `workspace setup ... see the job's logs`, and the
+output is in the job's logs and in the checkout at `.git/igloo-setup.log`. The same job points `origin` at Igloo; it runs once per workspace.
 
 On the development worker (`IGLOO_WORKER_RUNTIME=process`) nothing is isolated: the setup job
 runs on the host, in the host's `$HOME`. Use it with dotfiles only on a throwaway host.
