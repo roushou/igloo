@@ -27,6 +27,10 @@ export type TerminalServerFrame = Schemas["TerminalServerFrame"];
 export type TerminalEndReason = Schemas["TerminalEndReason"];
 export type TerminalMode = Schemas["TerminalMode"];
 export type Takeover = Schemas["TakeoverResource"];
+export type Workspace = Schemas["WorkspaceResource"];
+export type WorkspacePhase = Schemas["WorkspacePhase"];
+export type WorkspaceSetup = Schemas["SetupResource"];
+export type Me = Schemas["MeResource"];
 
 /**
  * What a terminal runs, the screen it starts with, and whether it may type. A read-only terminal
@@ -143,6 +147,45 @@ export class ApiClient {
   /** Hands a taken-over task back; its next turn is told what the person changed. */
   async handBackTask(id: string): Promise<Task> {
     return unwrap(await this.http.POST("/v1/tasks/{id}/hand-back", { params: { path: { id } } }));
+  }
+
+  /** Who the signed-in token stands for. */
+  async me(): Promise<Me> {
+    return unwrap(await this.http.GET("/v1/me"));
+  }
+
+  /** The signed-in person's workspaces, oldest first. */
+  async workspaces(): Promise<Workspace[]> {
+    return unwrap(await this.http.GET("/v1/workspaces"));
+  }
+
+  async workspace(id: string): Promise<Workspace> {
+    return unwrap(await this.http.GET("/v1/workspaces/{id}", { params: { path: { id } } }));
+  }
+
+  /** Opens a workspace on `branch` of a repository, its default branch when omitted. */
+  async createWorkspace(repo: string, branch?: string): Promise<Workspace> {
+    return unwrap(
+      await this.http.POST("/v1/repos/{id}/workspaces", {
+        params: { path: { id: repo } },
+        body: { branch: branch || null },
+      }),
+    );
+  }
+
+  /** Starts a stopped workspace: it resumes from what its last stop sealed. */
+  async startWorkspace(id: string): Promise<Workspace> {
+    return unwrap(await this.http.POST("/v1/workspaces/{id}/start", { params: { path: { id } } }));
+  }
+
+  /** Stops a workspace: its changes are sealed, then its sandbox stops. */
+  async stopWorkspace(id: string): Promise<Workspace> {
+    return unwrap(await this.http.POST("/v1/workspaces/{id}/stop", { params: { path: { id } } }));
+  }
+
+  /** Deletes a workspace; its unsealed changes are dropped. */
+  async deleteWorkspace(id: string): Promise<void> {
+    expectOk(await this.http.DELETE("/v1/workspaces/{id}", { params: { path: { id } } }));
   }
 
   /** A task's transcript from position `after` on. */

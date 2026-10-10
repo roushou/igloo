@@ -248,6 +248,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Says who the caller is: the person the token stands for (for an agent, the person it acts
+         *     for), so a client can tell which `owner`, `by` or `author` is the viewer.
+         */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repos": {
         parameters: {
             query?: never;
@@ -728,9 +748,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Hands a task back, as the person who took it over, once its last turn ended and its commits
-         *     became a revision (until then the request is refused with `task.turn_running`). The sandbox
-         *     is read for what the person changed, without touching it, and the task's next turn is asked
+         * Hands a task back, as any person (so a forgotten take-over can be released), once its last
+         *     turn ended and its commits became a revision (until then the request is refused with
+         *     `task.turn_running`). The sandbox is read for what the person changed, without touching it, and the task's next turn is asked
          *     about the commits they added and the changes they left uncommitted. Uncommitted work stays in
          *     place. Handing back a task already being handed back changes nothing.
          */
@@ -1269,6 +1289,13 @@ export interface components {
          * @enum {string}
          */
         ListOrder: "oldest" | "newest";
+        /** @description The person a request's token stands for. */
+        MeResource: {
+            /** @description The name to show for the person; never empty. */
+            display_name: string;
+            /** @description The person's id (`usr_...`), as it appears in `owner`, `by` and `author` fields. */
+            id: string;
+        };
         /**
          * @description How a layer blob is encoded.
          * @enum {string}
@@ -1508,6 +1535,23 @@ export interface components {
             /** @description The names, sorted. */
             names: string[];
         };
+        /**
+         * @description How setting up a workspace's sandbox ended: pointing `origin` at Igloo and installing the
+         *     repository's dotfiles. A failed setup leaves the workspace usable.
+         */
+        SetupResource: {
+            /** @description The job that ran it (`job_...`); `GET /v1/jobs/{id}/logs` has its output. */
+            job: string;
+            /** @description Why it failed; absent when it succeeded. */
+            reason?: string | null;
+            /** @description Whether it worked. */
+            state: components["schemas"]["SetupState"];
+        };
+        /**
+         * @description Whether setting up a workspace's sandbox worked.
+         * @enum {string}
+         */
+        SetupState: "succeeded" | "failed";
         /** @description A snapshot. */
         SnapshotResource: {
             /** @description Its id: the digest of its manifest. */
@@ -1903,6 +1947,7 @@ export interface components {
             repo: string;
             /** @description Its sandbox, while it has one. Its terminal is the sandbox's. */
             sandbox?: string | null;
+            setup?: components["schemas"]["SetupResource"] | null;
             /** @description The snapshot its last stop sealed, which holds everything the workspace has. */
             snapshot?: string | null;
         };
@@ -2414,6 +2459,33 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResource"];
                 };
             };
             404: {

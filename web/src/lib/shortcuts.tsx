@@ -30,6 +30,7 @@ export const SHORTCUTS: { group: string; items: Shortcut[] }[] = [
       { keys: ["G", "N"], sequence: true, label: "Now" },
       { keys: ["G", "T"], sequence: true, label: "Tasks" },
       { keys: ["G", "C"], sequence: true, label: "Changes" },
+      { keys: ["G", "W"], sequence: true, label: "Workspaces" },
       { keys: ["G", "S"], sequence: true, label: "System" },
       { keys: ["G", "R"], sequence: true, label: "Repository" },
     ],
@@ -49,6 +50,7 @@ const GO_TO = {
   n: "/",
   t: "/tasks",
   c: "/changes",
+  w: "/workspaces",
   s: "/system",
   r: "/settings",
 } as const;

@@ -22,6 +22,8 @@ import { Route as AppJobsIdRouteImport } from './routes/_app/jobs.$id'
 import { Route as AppRunsIdRouteImport } from './routes/_app/runs.$id'
 import { Route as AppTasksIndexRouteImport } from './routes/_app/tasks.index'
 import { Route as AppTasksIdRouteImport } from './routes/_app/tasks.$id'
+import { Route as AppWorkspacesIndexRouteImport } from './routes/_app/workspaces.index'
+import { Route as AppWorkspacesIdRouteImport } from './routes/_app/workspaces.$id'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -87,6 +89,16 @@ const AppTasksIdRoute = AppTasksIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AppTasksRoute,
 } as any)
+const AppWorkspacesIndexRoute = AppWorkspacesIndexRouteImport.update({
+  id: '/workspaces/',
+  path: '/workspaces/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkspacesIdRoute = AppWorkspacesIdRouteImport.update({
+  id: '/workspaces/$id',
+  path: '/workspaces/$id',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -99,8 +111,10 @@ export interface FileRoutesByFullPath {
   '/jobs/$id': typeof AppJobsIdRoute
   '/runs/$id': typeof AppRunsIdRoute
   '/tasks/$id': typeof AppTasksIdRoute
+  '/workspaces/$id': typeof AppWorkspacesIdRoute
   '/changes/': typeof AppChangesIndexRoute
   '/tasks/': typeof AppTasksIndexRoute
+  '/workspaces/': typeof AppWorkspacesIndexRoute
 }
 export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
@@ -111,8 +125,10 @@ export interface FileRoutesByTo {
   '/jobs/$id': typeof AppJobsIdRoute
   '/runs/$id': typeof AppRunsIdRoute
   '/tasks/$id': typeof AppTasksIdRoute
+  '/workspaces/$id': typeof AppWorkspacesIdRoute
   '/changes': typeof AppChangesIndexRoute
   '/tasks': typeof AppTasksIndexRoute
+  '/workspaces': typeof AppWorkspacesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -127,8 +143,10 @@ export interface FileRoutesById {
   '/_app/jobs/$id': typeof AppJobsIdRoute
   '/_app/runs/$id': typeof AppRunsIdRoute
   '/_app/tasks/$id': typeof AppTasksIdRoute
+  '/_app/workspaces/$id': typeof AppWorkspacesIdRoute
   '/_app/changes/': typeof AppChangesIndexRoute
   '/_app/tasks/': typeof AppTasksIndexRoute
+  '/_app/workspaces/': typeof AppWorkspacesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -143,8 +161,10 @@ export interface FileRouteTypes {
     | '/jobs/$id'
     | '/runs/$id'
     | '/tasks/$id'
+    | '/workspaces/$id'
     | '/changes/'
     | '/tasks/'
+    | '/workspaces/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/signin'
@@ -155,8 +175,10 @@ export interface FileRouteTypes {
     | '/jobs/$id'
     | '/runs/$id'
     | '/tasks/$id'
+    | '/workspaces/$id'
     | '/changes'
     | '/tasks'
+    | '/workspaces'
   id:
     | '__root__'
     | '/_app'
@@ -170,8 +192,10 @@ export interface FileRouteTypes {
     | '/_app/jobs/$id'
     | '/_app/runs/$id'
     | '/_app/tasks/$id'
+    | '/_app/workspaces/$id'
     | '/_app/changes/'
     | '/_app/tasks/'
+    | '/_app/workspaces/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -272,6 +296,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTasksIdRouteImport
       parentRoute: typeof AppTasksRoute
     }
+    '/_app/workspaces/': {
+      id: '/_app/workspaces/'
+      path: '/workspaces'
+      fullPath: '/workspaces/'
+      preLoaderRoute: typeof AppWorkspacesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/workspaces/$id': {
+      id: '/_app/workspaces/$id'
+      path: '/workspaces/$id'
+      fullPath: '/workspaces/$id'
+      preLoaderRoute: typeof AppWorkspacesIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -311,6 +349,8 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppJobsIdRoute: typeof AppJobsIdRoute
   AppRunsIdRoute: typeof AppRunsIdRoute
+  AppWorkspacesIdRoute: typeof AppWorkspacesIdRoute
+  AppWorkspacesIndexRoute: typeof AppWorkspacesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -321,6 +361,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppJobsIdRoute: AppJobsIdRoute,
   AppRunsIdRoute: AppRunsIdRoute,
+  AppWorkspacesIdRoute: AppWorkspacesIdRoute,
+  AppWorkspacesIndexRoute: AppWorkspacesIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

@@ -15,7 +15,7 @@ import { status } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 /** The run that counts for `revision`: the latest one started for it. */
-function latestRun(runs: readonly Run[], revision: number): Run | null {
+export function latestRun(runs: readonly Run[], revision: number): Run | null {
   return (
     runs
       .filter((run) => run.revision === revision)

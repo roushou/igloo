@@ -20,6 +20,7 @@ export function ItemRow({
   details,
   meta,
   time,
+  actions,
   selected,
 }: {
   state: State;
@@ -33,6 +34,8 @@ export function ItemRow({
   meta?: ReactNode;
   /** When it happened or how long it has run. */
   time?: ReactNode;
+  /** Buttons for the item, above the row's link so they stay clickable. */
+  actions?: ReactNode;
   /** The item whose detail is open beside the list. */
   selected?: boolean;
 }) {
@@ -47,6 +50,7 @@ export function ItemRow({
       aria-current={selected ? "true" : undefined}
       className={cn(
         "group relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 px-4 py-2.5 transition-colors duration-150 hover:bg-accent/60 has-[a:focus-visible]:bg-accent has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-ring/70 @xl:grid-cols-[6rem_minmax(0,1fr)_auto]",
+        actions && "@xl:grid-cols-[6rem_minmax(0,1fr)_auto_auto]",
         selected && "bg-accent",
         state === "needs-you" &&
           "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-expedition",
@@ -71,6 +75,11 @@ export function ItemRow({
         <div className="col-start-2 row-start-1 flex items-center justify-self-end text-sm text-muted-foreground @xl:col-start-3">
           {meta ? <span className="mr-3 flex items-center gap-2 font-mono">{meta}</span> : null}
           {time ? <span className="tabular min-w-14 text-right">{time}</span> : null}
+        </div>
+      ) : null}
+      {actions ? (
+        <div className="relative z-10 col-span-2 row-start-3 flex items-center gap-1.5 @xl:col-span-1 @xl:col-start-4 @xl:row-start-1">
+          {actions}
         </div>
       ) : null}
     </motion.li>

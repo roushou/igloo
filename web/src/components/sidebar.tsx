@@ -11,6 +11,7 @@ import {
   Search,
   Server,
   Settings,
+  SquareTerminal,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { api } from "@/api/client";
@@ -26,7 +27,7 @@ import { useShortcuts } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 
 const PAGES: {
-  to: "/" | "/tasks" | "/changes" | "/system" | "/settings";
+  to: "/" | "/tasks" | "/changes" | "/workspaces" | "/system" | "/settings";
   label: string;
   icon: LucideIcon;
   keys: string;
@@ -34,6 +35,7 @@ const PAGES: {
   { to: "/", label: "Now", icon: Inbox, keys: "G N" },
   { to: "/tasks", label: "Tasks", icon: ListChecks, keys: "G T" },
   { to: "/changes", label: "Changes", icon: GitPullRequest, keys: "G C" },
+  { to: "/workspaces", label: "Workspaces", icon: SquareTerminal, keys: "G W" },
   { to: "/system", label: "System", icon: Server, keys: "G S" },
   { to: "/settings", label: "Repository", icon: Settings, keys: "G R" },
 ];

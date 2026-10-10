@@ -1,7 +1,7 @@
 /** The kinds of resource the console can open by id, keyed by TypeID prefix. */
-export type ResourceKind = "repo" | "chg" | "task" | "run" | "job" | "sbx";
+export type ResourceKind = "repo" | "chg" | "task" | "run" | "job" | "sbx" | "wsp";
 
-const KINDS: readonly ResourceKind[] = ["repo", "chg", "task", "run", "job", "sbx"];
+const KINDS: readonly ResourceKind[] = ["repo", "chg", "task", "run", "job", "sbx", "wsp"];
 
 /** A pasted resource id: `<prefix>_<26 characters>` with one of the known prefixes. */
 export class ResourceId {

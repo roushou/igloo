@@ -161,3 +161,25 @@ export function file(
 export function diff(files: S["FileDiffResource"][], revision = 1): S["DiffResource"] {
   return { base: "a".repeat(40), head: "b".repeat(40), revision, files };
 }
+
+export function workspace(
+  n: number,
+  overrides: Partial<S["WorkspaceResource"]> = {},
+): S["WorkspaceResource"] {
+  return {
+    id: id("wsp", n),
+    owner: id("usr", 7),
+    repo: REPO.id,
+    branch: `feature-${n}`,
+    phase: "running",
+    sandbox: id("sbx", 50 + n),
+    last_activity: "2026-01-01T11:00:00Z",
+    created_at: T0,
+    ...overrides,
+  };
+}
+
+/** The signed-in person: the one who owns the fixtures' workspaces. */
+export function me(overrides: Partial<S["MeResource"]> = {}): S["MeResource"] {
+  return { id: id("usr", 7), display_name: "Ada", ...overrides };
+}

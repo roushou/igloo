@@ -25,6 +25,9 @@ export const queryKeys = {
   sandbox: (id: string) => ["sandbox", id] as const,
   workers: () => ["workers"] as const,
   storage: () => ["storage"] as const,
+  workspaces: () => ["workspaces"] as const,
+  workspace: (id: string) => ["workspace", id] as const,
+  me: () => ["me"] as const,
 };
 
 /** How often a working task's transcript is read for new entries, in milliseconds. */
@@ -98,6 +101,17 @@ export const queries = {
   workers: () => queryOptions({ queryKey: queryKeys.workers(), queryFn: () => api.workers() }),
 
   storage: () => queryOptions({ queryKey: queryKeys.storage(), queryFn: () => api.storage() }),
+
+  /** The signed-in person's workspaces. */
+  workspaces: () =>
+    queryOptions({ queryKey: queryKeys.workspaces(), queryFn: () => api.workspaces() }),
+
+  workspace: (id: string) =>
+    queryOptions({ queryKey: queryKeys.workspace(id), queryFn: () => api.workspace(id) }),
+
+  /** Who the signed-in token stands for; it does not change while signed in. */
+  me: () =>
+    queryOptions({ queryKey: queryKeys.me(), queryFn: () => api.me(), staleTime: Infinity }),
 };
 
 /**
@@ -122,6 +136,8 @@ export function staleQueries(notice: EventNotice): QueryKey[] {
       return [queryKeys.sandbox(id), queryKeys.sandboxes()];
     case "worker":
       return [queryKeys.workers()];
+    case "workspace":
+      return [queryKeys.workspace(id), queryKeys.workspaces()];
     default:
       return [];
   }

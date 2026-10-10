@@ -23,8 +23,8 @@ it, `/` is 404 and the API still works.
 ## The rail
 
 The left rail holds the repository switcher, the pages, the connection state and sign out.
-`⌘K` (or `Ctrl+K`) opens a resource by id: paste a `task_`, `chg_`, `run_`, `job_` or `sbx_` id, or
-a `repo_` id to switch repository.
+`⌘K` (or `Ctrl+K`) opens a resource by id: paste a `task_`, `chg_`, `run_`, `job_` or `sbx_` or
+`wsp_` id, or a `repo_` id to switch repository.
 
 The console follows one event stream. When the connection to the server is lost the rail reads
 _Reconnecting…_, then _Offline_; when it returns, the console resumes from the last event it saw and
@@ -50,7 +50,7 @@ Orange never means an error. Logs, tool output and diffs are dark in both themes
 
 **Now** (`/`) puts what needs you first, then what runs, then history. _Needs you_ lists tasks
 awaiting review and open changes whose checks passed or that need an approval, each with what it
-waits on. _Running_ lists working tasks and runs with their step and elapsed time. _Recent runs_
+waits on. _Running_ lists working tasks, your running workspaces and runs with their step and elapsed time. _Recent runs_
 shows how runs ended, with the reason of an errored one. _Recent activity_ lists events as they
 arrive.
 
@@ -60,7 +60,16 @@ change, and a transcript that grows while the agent works: each tool call is one
 to its input and output, and edits show as removed and added lines. _Cancel task_ stops it.
 _Watch the sandbox_ opens a read-only terminal on it. _Take over_ makes the terminal writable for you
 and starts no further turn once the running one ends; _Hand back_ tells the agent what you changed
-and resumes the task.
+and resumes the task. When someone else holds the take-over the terminal stays read-only for you and
+says so; anyone may hand the task back.
+
+**Workspaces** (`/workspaces`) lists your workspaces with phase, branch and last activity. _Start_,
+_Stop_ and _Delete_ (which asks first) act on a row; _Create workspace_ takes a branch of the
+repository, its default branch when empty. A workspace (`/workspaces/:id`) fills the page with its
+terminal while it runs, and says what it waits for in the other phases (starting, stopping,
+stopped). Beside it: the change proposing the branch, the checks of its latest revision, and the
+recent pushes (its revisions). A failed dotfiles setup shows its reason and a link to the job log;
+the terminal still works.
 
 **Changes** (`/changes`) lists changes grouped by state. A change (`/changes/:id`) shows the merge
 checklist (checks, approval, fast-forward) above four tabs:

@@ -15,6 +15,14 @@ export const STATE_LABELS: Record<State, string> = {
   closed: "Closed",
 };
 
+/** What a workspace's pill says: its phase. */
+export const WORKSPACE_LABELS: Record<S["WorkspacePhase"], string> = {
+  starting: "Starting",
+  running: "Running",
+  stopping: "Stopping",
+  stopped: "Stopped",
+};
+
 /** Every state, most urgent first. */
 export const STATES: readonly State[] = [
   "needs-you",
@@ -124,6 +132,21 @@ export const status = {
         return "closed";
       case "failed":
         return "errored";
+    }
+  },
+
+  /**
+   * A workspace that is starting, running or stopping is working for the person; a stopped one is
+   * closed. A failed setup does not change it: the workspace is still usable.
+   */
+  workspace(workspace: Pick<S["WorkspaceResource"], "phase">): State {
+    switch (workspace.phase) {
+      case "starting":
+      case "running":
+      case "stopping":
+        return "running";
+      case "stopped":
+        return "closed";
     }
   },
 

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CheckCheck, Zap } from "lucide-react";
-import type { Change, Run, Task } from "@/api/client";
+import type { Change, Run, Task, Workspace } from "@/api/client";
 import { ChecksStrip } from "@/components/checks-strip";
 import { Timing } from "@/components/elapsed";
 import { EmptyState } from "@/components/empty-state";
@@ -16,7 +16,7 @@ import { useRecentActivity } from "@/lib/events";
 import { format } from "@/lib/format";
 import { queries } from "@/lib/queries";
 import { waitingOn } from "@/lib/readiness";
-import { status } from "@/lib/status";
+import { status, WORKSPACE_LABELS } from "@/lib/status";
 import { runStep, taskStep } from "@/lib/steps";
 
 /** Now: what waits on the user, what runs, and what just happened. */
@@ -32,6 +32,7 @@ function Now({ repo }: { repo: string }) {
   const tasks = useQuery(queries.tasks(repo, [...NOW_TASK_PHASES]));
   const changes = useQuery(queries.changes(repo, ["open"]));
   const runs = useQuery(queries.runs(repo));
+  const workspaces = useQuery(queries.workspaces());
   const activity = useRecentActivity();
 
   return (
@@ -46,7 +47,14 @@ function Now({ repo }: { repo: string }) {
       <Await query={tasks} what="tasks">
         {(tasks) => (
           <Await query={runs} what="runs">
-            {(runs) => <Running tasks={tasks} runs={runs} />}
+            {(runs) => (
+              <Running
+                tasks={tasks}
+                runs={runs}
+                workspaces={(workspaces.data ?? []).filter((workspace) => workspace.repo === repo)}
+                workspacesFailed={workspaces.isError}
+              />
+            )}
           </Await>
         )}
       </Await>
@@ -99,12 +107,27 @@ function Waiting({ tasks, changes }: { tasks: Task[]; changes: Change[] }) {
   );
 }
 
-function Running({ tasks, runs }: { tasks: Task[]; runs: Run[] }) {
+function Running({
+  tasks,
+  runs,
+  workspaces,
+  workspacesFailed,
+}: {
+  tasks: Task[];
+  runs: Run[];
+  workspaces: Workspace[];
+  /** The workspaces could not be read; tasks and runs still show. */
+  workspacesFailed: boolean;
+}) {
   const runningTasks = tasks.filter((task) => status.task(task) === "running");
   const runningRuns = runs.filter((run) => status.run(run) === "running");
-  const count = runningTasks.length + runningRuns.length;
+  const runningWorkspaces = workspaces.filter(
+    (workspace) => status.workspace(workspace) === "running",
+  );
+  const count = runningTasks.length + runningWorkspaces.length + runningRuns.length;
   return (
     <Section title="Running" count={count}>
+      {workspacesFailed ? <Empty>Could not load workspaces.</Empty> : null}
       {count === 0 ? (
         <Empty>Nothing is running.</Empty>
       ) : (
@@ -118,6 +141,22 @@ function Running({ tasks, runs }: { tasks: Task[]; runs: Run[] }) {
               details={<span>{taskStep(task)}</span>}
               meta={<ShortId id={task.id} />}
               time={<Timing startedAt={task.created_at} />}
+            />
+          ))}
+          {runningWorkspaces.map((workspace) => (
+            <ItemRow
+              key={workspace.id}
+              state="running"
+              label={WORKSPACE_LABELS[workspace.phase]}
+              title={`Workspace on ${workspace.branch}`}
+              link={{ to: "/workspaces/$id", params: { id: workspace.id } }}
+              details={
+                <span>
+                  Last used <RelativeTime at={workspace.last_activity} />
+                </span>
+              }
+              meta={<ShortId id={workspace.id} />}
+              time={<Timing startedAt={workspace.created_at} />}
             />
           ))}
           {runningRuns.map((run) => (
@@ -233,6 +272,12 @@ function Subject({ notice }: { notice: EventNotice }) {
     case "run":
       return (
         <Link to="/runs/$id" params={{ id }} className={SUBJECT_CLASS}>
+          {format.shortId(id)}
+        </Link>
+      );
+    case "workspace":
+      return (
+        <Link to="/workspaces/$id" params={{ id }} className={SUBJECT_CLASS}>
           {format.shortId(id)}
         </Link>
       );

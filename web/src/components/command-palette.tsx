@@ -12,6 +12,7 @@ import {
   Plus,
   Server,
   Settings,
+  SquareTerminal,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "@/api/client";
@@ -40,6 +41,7 @@ const LABELS = {
   run: "run",
   job: "job",
   sbx: "sandbox",
+  wsp: "workspace",
 } as const;
 
 /**
@@ -78,6 +80,8 @@ export function CommandPalette() {
         return navigate({ to: "/jobs/$id", params: { id: resource.id } });
       case "sbx":
         return navigate({ to: "/system", search: { sandbox: resource.id } });
+      case "wsp":
+        return navigate({ to: "/workspaces/$id", params: { id: resource.id } });
     }
   };
 
@@ -115,6 +119,15 @@ export function CommandPalette() {
         icon: GitPullRequest,
         shortcut: "G C",
         run: () => void navigate({ to: "/changes" }),
+      },
+      {
+        id: "go-workspaces",
+        label: "Go to Workspaces",
+        group: "Go to",
+        icon: SquareTerminal,
+        shortcut: "G W",
+        keywords: ["terminal", "shell"],
+        run: () => void navigate({ to: "/workspaces" }),
       },
       {
         id: "go-system",

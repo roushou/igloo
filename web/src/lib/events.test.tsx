@@ -36,6 +36,10 @@ describe("staleQueries", () => {
       queryKeys.sandbox("sbx_1"),
       queryKeys.sandboxes(),
     ]);
+    expect(staleQueries(notice("workspace", "wsp_1", "repo_1"))).toEqual([
+      queryKeys.workspace("wsp_1"),
+      queryKeys.workspaces(),
+    ]);
     expect(staleQueries(notice("seal", "seal_1"))).toEqual([]);
   });
 

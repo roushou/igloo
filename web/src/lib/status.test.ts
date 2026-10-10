@@ -23,9 +23,15 @@ describe("status", () => {
     ["sandbox", "running", "running"],
     ["sandbox", "failed", "errored"],
     ["sandbox", "stopped", "closed"],
+    ["workspace", "starting", "running"],
+    ["workspace", "running", "running"],
+    ["workspace", "stopping", "running"],
+    ["workspace", "stopped", "closed"],
   ])("maps %s %s to %s", (kind, phase, expected) => {
     const resource = { phase } as never;
-    expect(status[kind as "task" | "run" | "job" | "sandbox"](resource)).toBe(expected);
+    expect(status[kind as "task" | "run" | "job" | "sandbox" | "workspace"](resource)).toBe(
+      expected,
+    );
   });
 
   it("tells a finished job's exit code apart", () => {
