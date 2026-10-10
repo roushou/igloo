@@ -15,7 +15,7 @@ Exit gate, for the Igloo repository itself, through the tunnel at `http://127.0.
 6. Secrets are set and deleted from the console; values are never shown or returned.
 
 Order: P5.1 -> P5.2, P5.3, P5.4 and P5.5 in parallel -> P5.6 -> P5.7 and P5.8 in parallel -> P5.9.
-P5.10 follows P5.8. P5.11 and P5.12 follow P5.9, in parallel.
+P5.10 follows P5.8. P5.11 and P5.12 follow P5.9, in parallel. P5.13 follows P5.10.
 
 Read first for every task: ADR 0012, architecture §10.
 
@@ -346,6 +346,32 @@ keyboard.
 ### Acceptance
 
 - Each new field is covered by a REST test; the committed schema and generated types are current.
+
+## P5.13 Warm snapshot retention
+
+- Depends on: P5.10
+- Contract changes: `igloo-core` (repository events), `igloo-api`, `schemas/openapi.json`
+
+### Goal
+
+Warm and agent snapshots nobody uses any more stop being roots, so the layer collector reclaims
+them. Today every key a repository ever recorded stays a root, so they are never reclaimed.
+
+### Deliverables
+
+- A repository records when each warm or agent snapshot was last used: when a run's checkout or
+  a task's sandbox is made over it. At most one such record per snapshot per hour.
+- A retention pass, run before each sweep, forgets every recorded snapshot unused for 7 days,
+  except the repository's most recently used one and any a sandbox that has not ended runs
+  over. A forgotten key is rebuilt the next time a run or task needs it.
+- `GET /v1/repos/{id}/snapshots` reports each snapshot's last use; System shows it.
+
+### Acceptance
+
+- A snapshot unused for 7 days is forgotten and its layers reclaimed at the next sweep after the
+  grace period; a used one, the most recently used one, and one under a live sandbox are kept
+  (scenario tests).
+- A run needing a forgotten key rebuilds it.
 
 ## Out of scope
 
