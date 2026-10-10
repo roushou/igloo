@@ -8,6 +8,7 @@ use igloo_api::repo::{
     CheckoutTarget, RegisterRepoRequest, RepoRegistration, RepoResource, RepoSnapshotRequest,
     RepoSnapshotResource, SecretList,
 };
+use igloo_api::snapshot::WarmSnapshotResource;
 use igloo_core::ValidationErrors;
 use igloo_core::repo::{RepoId, SecretName};
 
@@ -142,6 +143,48 @@ pub(super) async fn snapshot(
             commit.to_string(),
         )),
     ))
+}
+
+/// Lists the snapshots a repository recorded under keys, warm and agent, ordered by key. Sizes
+/// are not reported yet.
+#[utoipa::path(
+    get,
+    operation_id = "listRepoSnapshots",
+    path = "/v1/repos/{id}/snapshots",
+    tag = "repos",
+    params(("id" = String, Path)),
+    responses((status = 200, body = Vec<WarmSnapshotResource>), (status = 404, body = Problem))
+)]
+pub(super) async fn snapshots(
+    State(state): State<ApiState>,
+    _: Caller,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<WarmSnapshotResource>>, ApiError> {
+    let id = parse_id(&id)?;
+    let repo = state
+        .repos
+        .get(id)
+        .await
+        .map_err(AppError::from)?
+        .ok_or_else(|| ApiError::not_found("repo.not_found"))?;
+    let mut resources = Vec::new();
+    for (key, warm) in repo.warm_snapshots() {
+        let mut resource = WarmSnapshotResource::new(
+            key.to_string(),
+            warm.snapshot.to_string(),
+            warm.commit.to_string(),
+        );
+        if let Some(at) = state
+            .timings
+            .built(&id.to_string(), &key.to_string())
+            .await
+            .map_err(AppError::from)?
+        {
+            resource = resource.with_built_at(at);
+        }
+        resources.push(resource);
+    }
+    Ok(Json(resources))
 }
 
 /// Lists the names of a repository's secrets; values are never returned.

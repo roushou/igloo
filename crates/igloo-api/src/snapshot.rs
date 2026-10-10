@@ -3,7 +3,7 @@
 use igloo_core::snapshot::{
     MediaType as CoreMediaType, SnapshotId, SnapshotLayer, SnapshotManifest,
 };
-use igloo_core::{Digest, ValidationErrors};
+use igloo_core::{Digest, Timestamp, ValidationErrors};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -149,5 +149,56 @@ impl From<(SnapshotId, &SnapshotManifest)> for SnapshotResource {
                 .map(|layer| Layer::new(layer.digest().to_string(), layer.media_type().into()))
                 .collect(),
         }
+    }
+}
+
+/// A snapshot a repository recorded under a key: a warm snapshot, or an agent snapshot over one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[non_exhaustive]
+pub struct WarmSnapshotResource {
+    /// What it was built from: a digest of its base, build command and lockfiles.
+    pub key: String,
+    /// The snapshot's id.
+    pub snapshot: String,
+    /// The commit it was built at.
+    pub commit: String,
+    /// The bytes of its layer blobs; absent until the blob store reports sizes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// When it was recorded, from the event log; absent when the log no longer holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub built_at: Option<Timestamp>,
+}
+
+impl WarmSnapshotResource {
+    /// The snapshot `snapshot` recorded under `key`, built at `commit`.
+    #[must_use]
+    pub fn new(
+        key: impl Into<String>,
+        snapshot: impl Into<String>,
+        commit: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            snapshot: snapshot.into(),
+            commit: commit.into(),
+            size_bytes: None,
+            built_at: None,
+        }
+    }
+
+    /// Sets the size of its layers.
+    #[must_use]
+    pub const fn with_size_bytes(mut self, bytes: u64) -> Self {
+        self.size_bytes = Some(bytes);
+        self
+    }
+
+    /// Sets when it was recorded.
+    #[must_use]
+    pub const fn with_built_at(mut self, at: Timestamp) -> Self {
+        self.built_at = Some(at);
+        self
     }
 }

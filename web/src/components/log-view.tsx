@@ -1,6 +1,7 @@
 import { ArrowDownToLine, ChevronDown, ChevronUp, Search, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "@/api/client";
+import { RelativeTime } from "@/components/relative-time";
 import { Input } from "@/components/ui/input";
 import { type ListHandle, VirtualList } from "@/components/virtual-list";
 import { firstErrorLine, JobLog, type LogLine } from "@/lib/job-log";
@@ -18,7 +19,13 @@ function useJobLog(id: string) {
     return () => next.stop();
   }, [id]);
   const empty = useMemo(
-    () => ({ version: 0, state: "loading" as const, lines: [] as LogLine[], job: null }),
+    () => ({
+      version: 0,
+      state: "loading" as const,
+      lines: [] as LogLine[],
+      job: null,
+      lastOutputAt: null,
+    }),
     [],
   );
   return useSyncExternalStore(
@@ -162,6 +169,11 @@ export function LogView({
             )}
           />
           {STATE_TEXT[log.state]}
+          {log.state === "streaming" && log.lastOutputAt !== null ? (
+            <span className="text-code-muted">
+              · last output <RelativeTime at={new Date(log.lastOutputAt).toISOString()} />
+            </span>
+          ) : null}
         </span>
       </div>
       <VirtualList

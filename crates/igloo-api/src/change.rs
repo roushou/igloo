@@ -189,6 +189,14 @@ pub struct ChangeResource {
     /// Merge readiness; present only while the change is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<MergeReadiness>,
+    /// When it was merged; present only once merged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub merged_at: Option<Timestamp>,
+    /// When it was closed; present only once closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub closed_at: Option<Timestamp>,
 }
 
 impl CommentRequest {
@@ -300,6 +308,8 @@ impl From<&Change> for ChangeResource {
                 .map(CommentResource::from)
                 .collect(),
             readiness: None,
+            merged_at: None,
+            closed_at: None,
         }
     }
 }
@@ -318,6 +328,20 @@ impl FromStr for ChangePhase {
 }
 
 impl ChangeResource {
+    /// Sets when it was merged.
+    #[must_use]
+    pub const fn with_merged_at(mut self, at: Timestamp) -> Self {
+        self.merged_at = Some(at);
+        self
+    }
+
+    /// Sets when it was closed.
+    #[must_use]
+    pub const fn with_closed_at(mut self, at: Timestamp) -> Self {
+        self.closed_at = Some(at);
+        self
+    }
+
     /// Sets the merge readiness.
     #[must_use]
     pub fn with_readiness(mut self, readiness: MergeReadiness) -> Self {
@@ -465,6 +489,7 @@ impl DiffResource {
 
 /// Which revision of a change a diff is of.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DiffQuery {
     /// The revision, from 1; the latest when omitted.
     pub revision: Option<u32>,

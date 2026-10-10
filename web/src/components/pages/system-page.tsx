@@ -49,7 +49,7 @@ export function SystemPage({ sandbox }: { sandbox?: string }) {
             {(sandboxes) => (
               <>
                 <Sandboxes repo={repo.id} sandboxes={sandboxes} focus={sandbox} />
-                <Snapshots sandboxes={sandboxes} />
+                <Snapshots repo={repo.id} sandboxes={sandboxes} />
               </>
             )}
           </Await>
@@ -301,16 +301,29 @@ export type SnapshotRow = {
   builtAt?: string;
 };
 
-/** The snapshots the sandboxes are made from, with how many use each. */
-function Snapshots({ sandboxes }: { sandboxes: Sandbox[] }) {
+/**
+ * The repository's recorded snapshots, with when they were built and their size once the blob
+ * store reports it, then any other snapshot a sandbox runs from; each with how many sandboxes
+ * use it.
+ */
+function Snapshots({ repo, sandboxes }: { repo: string; sandboxes: Sandbox[] }) {
+  const recorded = useQuery(queries.repoSnapshots(repo));
   const counts = new Map<string, number>();
   for (const sandbox of sandboxes)
     counts.set(sandbox.snapshot, (counts.get(sandbox.snapshot) ?? 0) + 1);
-  const rows: SnapshotRow[] = [...counts].map(([id, count]) => ({ id, sandboxes: count }));
+  const rows: SnapshotRow[] = (recorded.data ?? []).map((snapshot) => ({
+    id: snapshot.snapshot,
+    sandboxes: counts.get(snapshot.snapshot) ?? 0,
+    size: snapshot.size_bytes ?? undefined,
+    builtAt: snapshot.built_at ?? undefined,
+  }));
+  for (const [id, count] of counts) {
+    if (!rows.some((row) => row.id === id)) rows.push({ id, sandboxes: count });
+  }
   return (
     <Section title="Snapshots" count={rows.length}>
       {rows.length === 0 ? (
-        <Empty>No sandbox uses a snapshot.</Empty>
+        <Empty>No snapshot has been built.</Empty>
       ) : (
         <table aria-label="Snapshots" className="w-full text-base">
           <thead>

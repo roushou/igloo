@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use igloo_core::repo::Repo;
 use igloo_core::{Actor, Digest, Id};
 use jiff::SignedDuration;
 use serde_json::{Value, json};
@@ -29,11 +30,24 @@ fn api() -> Router {
 
 /// The API, with the stores tests seed state through.
 fn api_with_stores() -> (Router, Arc<dyn EntityStore<Run>>, MemoryStores) {
+    let (router, runs, _repos, stores) = api_parts();
+    (router, runs, stores)
+}
+
+/// The API, with every store tests seed state through.
+#[allow(clippy::type_complexity, reason = "a tuple of the stores a test seeds")]
+fn api_parts() -> (
+    Router,
+    Arc<dyn EntityStore<Run>>,
+    Arc<dyn EntityStore<Repo>>,
+    MemoryStores,
+) {
     let MemoryPlatform {
         mut builder,
         stores,
     } = MemoryPlatform::new();
     let runs = builder.store::<Run>().expect("run store");
+    let repos = builder.store::<Repo>().expect("repo store");
     builder
         .install(SandboxModule {
             settings: ControllerSettings::default(),
@@ -60,7 +74,7 @@ fn api_with_stores() -> (Router, Arc<dyn EntityStore<Run>>, MemoryStores) {
     let api =
         RestApi::new(&builder, builder.bus(), DevToken::new(TOKEN, actor), urls).expect("api");
     let _platform = builder.build();
-    (api.router(), runs, stores)
+    (api.router(), runs, repos, stores)
 }
 
 struct Call {
@@ -1035,6 +1049,8 @@ async fn merge_readiness_agrees_with_what_merging_requires() {
     let (status, body) = merge().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["phase"], "merged");
+    assert!(body["merged_at"].is_string(), "{body}");
+    assert!(body.get("closed_at").is_none());
     assert!(
         body.get("readiness").is_none(),
         "only open changes have readiness"
@@ -1357,4 +1373,218 @@ async fn a_changes_diff_follows_its_revisions() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(missing["code"], "change.not_found");
+}
+
+/// Commits `entity`'s new events to `store` as of `START + seconds`.
+async fn commit_at<E>(store: &Arc<dyn EntityStore<E>>, entity: &mut Versioned<E>, seconds: i64)
+where
+    E: igloo_core::Entity + Send + Sync + 'static,
+{
+    let meta = CommitMeta {
+        actor: Actor::Human {
+            user: Id::from_uuid(Uuid::from_u128(7)),
+        },
+        time: START.saturating_add(SignedDuration::from_secs(seconds)),
+        correlation_id: CorrelationId::from_uuid(Uuid::from_u128(u128::from(
+            seconds.unsigned_abs(),
+        ))),
+        causation_id: None,
+    };
+    store.commit(entity, &meta).await.expect("commit");
+}
+
+fn at(seconds: i64) -> String {
+    START
+        .saturating_add(SignedDuration::from_secs(seconds))
+        .to_string()
+}
+
+/// Walks job `id` through lease, start and finish, committing each step at the given second.
+async fn run_job(stores: &MemoryStores, id: u128, started: i64, finished: i64) {
+    let spec = igloo_api::job::ExecRequest::new(vec!["true".to_owned()])
+        .into_spec(Id::from_uuid(Uuid::from_u128(id + 1)))
+        .expect("spec");
+    let id = Id::from_uuid(Uuid::from_u128(id));
+    let mut job = Versioned::new(igloo_core::job::Job::new(id, spec, START));
+    commit_at(&stores.jobs, &mut job, 0).await;
+    let lease = job
+        .entity_mut()
+        .lease(
+            Id::from_uuid(Uuid::from_u128(9)),
+            SignedDuration::from_secs(60),
+            START,
+        )
+        .expect("lease");
+    job.entity_mut().start(lease.token()).expect("start");
+    commit_at(&stores.jobs, &mut job, started).await;
+    job.entity_mut().finish(lease.token(), 0).expect("finish");
+    commit_at(&stores.jobs, &mut job, finished).await;
+}
+
+#[tokio::test]
+async fn jobs_report_when_they_started_and_ended() {
+    let (router, _runs, stores) = api_with_stores();
+    run_job(&stores, 5000, 10, 25).await;
+    let (status, job, _) = Call::new(
+        Method::GET,
+        format!(
+            "/v1/jobs/{}",
+            Id::<igloo_core::job::Job>::from_uuid(Uuid::from_u128(5000))
+        ),
+    )
+    .send(&router)
+    .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    assert_eq!(job["phase"], "finished");
+    assert_eq!(job["started_at"], at(10));
+    assert_eq!(job["ended_at"], at(25));
+}
+
+#[tokio::test]
+async fn a_queued_job_has_neither_time() {
+    let router = api();
+    let snapshot = snapshot(&router).await;
+    let sandbox = create_sandbox(&router, &snapshot, &json!({})).await;
+    let (_, job, _) = Call::new(Method::POST, format!("/v1/sandboxes/{sandbox}/exec"))
+        .json(&json!({ "argv": ["true"] }))
+        .send(&router)
+        .await;
+    assert!(job.get("started_at").is_none());
+    assert!(job.get("ended_at").is_none());
+}
+
+#[tokio::test]
+async fn runs_and_their_checks_report_their_times_and_sandbox() {
+    let (router, runs, stores) = api_with_stores();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    store_run(&runs, &change, 1, true).await;
+    run_job(&stores, 1001, 4, 9).await;
+    let (status, run, _) = Call::new(
+        Method::GET,
+        format!("/v1/runs/{}", Id::<Run>::from_uuid(Uuid::from_u128(1))),
+    )
+    .send(&router)
+    .await;
+    assert_eq!(status, StatusCode::OK, "{run}");
+    assert_eq!(run["phase"], "passed");
+    assert_eq!(
+        run["ended_at"],
+        at(0),
+        "the last check ended at the run's commit"
+    );
+    assert_eq!(
+        run["sandbox"],
+        Id::<igloo_core::sandbox::Sandbox>::from_uuid(Uuid::from_u128(2001)).to_string()
+    );
+    assert_eq!(run["checks"][0]["started_at"], at(4));
+    assert_eq!(run["checks"][0]["ended_at"], at(9));
+}
+
+#[tokio::test]
+async fn a_running_run_has_no_end() {
+    let (router, runs, _stores) = api_with_stores();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    let run = Run::new(
+        Id::from_uuid(Uuid::from_u128(1)),
+        repo.parse().expect("repo"),
+        (change["id"].as_str().expect("id").parse().expect("id"), 1),
+        change["revisions"][0]["head"]
+            .as_str()
+            .expect("head")
+            .parse()
+            .expect("commit"),
+        START,
+    );
+    commit_at(&runs, &mut Versioned::new(run), 0).await;
+    let (_, run, _) = Call::new(
+        Method::GET,
+        format!("/v1/runs/{}", Id::<Run>::from_uuid(Uuid::from_u128(1))),
+    )
+    .send(&router)
+    .await;
+    assert_eq!(run["phase"], "preparing");
+    assert!(run.get("ended_at").is_none());
+    assert!(run.get("sandbox").is_none());
+}
+
+#[tokio::test]
+async fn changes_report_when_they_were_closed() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+    let change = open_change(&router, &repo, "feature").await;
+    assert!(change.get("closed_at").is_none());
+    assert!(change.get("merged_at").is_none());
+    let id = change["id"].as_str().expect("id");
+    let (_, closed, _) = Call::new(Method::POST, format!("/v1/changes/{id}/close"))
+        .send(&router)
+        .await;
+    assert!(closed["closed_at"].is_string(), "{closed}");
+    assert!(closed.get("merged_at").is_none());
+    let (_, listed, _) = Call::new(Method::GET, format!("/v1/repos/{repo}/changes"))
+        .send(&router)
+        .await;
+    assert_eq!(listed[0]["closed_at"], closed["closed_at"]);
+}
+
+#[tokio::test]
+async fn a_repository_lists_its_recorded_snapshots() {
+    let (router, _runs, repos, _stores) = api_parts();
+    let snapshot = snapshot(&router).await;
+    let repo_id = Id::from_uuid(Uuid::from_u128(77));
+    let mut repo = Versioned::new(Repo::new(
+        repo_id,
+        igloo_core::repo::RepoLocation::Local {
+            path: "/srv/origin".to_owned(),
+        },
+        "main".parse().expect("branch"),
+        None,
+        START,
+    ));
+    commit_at(&repos, &mut repo, 0).await;
+    let uri = format!("/v1/repos/{repo_id}/snapshots");
+    let (status, none, _) = Call::new(Method::GET, &uri).send(&router).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(none, json!([]));
+
+    let key = Digest::from_blake3([3; 32]);
+    repo.entity_mut().record_warm(
+        key,
+        igloo_core::repo::WarmSnapshot {
+            snapshot: snapshot.parse().expect("snapshot"),
+            commit: "a".repeat(40).parse().expect("commit"),
+        },
+    );
+    commit_at(&repos, &mut repo, 30).await;
+    let (status, listed, _) = Call::new(Method::GET, &uri).send(&router).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed[0]["key"], key.to_string());
+    assert_eq!(listed[0]["snapshot"], snapshot);
+    assert_eq!(listed[0]["commit"], "a".repeat(40));
+    assert_eq!(listed[0]["built_at"], at(30));
+    assert!(
+        listed[0].get("size_bytes").is_none(),
+        "sizes are not reported yet"
+    );
+
+    let (status, _, _) = Call::new(Method::GET, "/v1/repos/repo_unknown/snapshots")
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

@@ -363,7 +363,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Lists the snapshots a repository recorded under keys, warm and agent, ordered by key. Sizes
+         *     are not reported yet.
+         */
+        get: operations["listRepoSnapshots"];
         put?: never;
         /**
          * Snapshots a repository at a commit: the checkout under `/workspace`, with a shallow `.git`,
@@ -713,10 +717,20 @@ export interface components {
         ChangeResource: {
             /** @description Human approvals, oldest first. */
             approvals: components["schemas"]["ApprovalResource"][];
+            /**
+             * Format: date-time
+             * @description When it was closed; present only once closed.
+             */
+            closed_at?: string | null;
             /** @description Review comments, oldest first. */
             comments?: components["schemas"]["CommentResource"][];
             /** @description Its id (`chg_...`). */
             id: string;
+            /**
+             * Format: date-time
+             * @description When it was merged; present only once merged.
+             */
+            merged_at?: string | null;
             /** @description The target branch's head after the merge, once merged. */
             merged_commit?: string | null;
             /** @description Where it is. */
@@ -736,6 +750,11 @@ export interface components {
         /** @description One check of a run. */
         CheckResource: {
             /**
+             * Format: date-time
+             * @description When its job ended; absent until it has.
+             */
+            ended_at?: string | null;
+            /**
              * Format: int32
              * @description The exit code, when it failed.
              */
@@ -746,6 +765,11 @@ export interface components {
             name: string;
             /** @description Why it did not complete. */
             reason?: string | null;
+            /**
+             * Format: date-time
+             * @description When its job's process started; absent until it has.
+             */
+            started_at?: string | null;
             /** @description Where it is. */
             status: components["schemas"]["CheckStatus"];
         };
@@ -956,6 +980,11 @@ export interface components {
         JobResource: {
             /** @description The program and its arguments. */
             argv: string[];
+            /**
+             * Format: date-time
+             * @description When it finished, failed or was cancelled; absent until it has.
+             */
+            ended_at?: string | null;
             /** @description Extra environment. */
             env: {
                 [key: string]: string;
@@ -975,6 +1004,11 @@ export interface components {
             sandbox: string;
             /** @description The repository secrets it is given, by name. */
             secrets?: string[];
+            /**
+             * Format: date-time
+             * @description When its process started; absent until it has.
+             */
+            started_at?: string | null;
             /**
              * Format: date-time
              * @description When it was submitted.
@@ -1137,6 +1171,11 @@ export interface components {
             checks: components["schemas"]["CheckResource"][];
             /** @description The commit checked. */
             commit: string;
+            /**
+             * Format: date-time
+             * @description When it ended, passed, failed or errored; absent while it runs.
+             */
+            ended_at?: string | null;
             /** @description Why it errored. */
             error?: string | null;
             /** @description Its id (`run_...`). */
@@ -1148,6 +1187,8 @@ export interface components {
              * @description The revision's number.
              */
             revision: number;
+            /** @description The sandbox its checks run in; absent until they start. */
+            sandbox?: string | null;
             /**
              * Format: date-time
              * @description When it started.
@@ -1360,6 +1401,25 @@ export interface components {
          * @enum {string}
          */
         TurnStatus: "running" | "succeeded" | "failed";
+        /** @description A snapshot a repository recorded under a key: a warm snapshot, or an agent snapshot over one. */
+        WarmSnapshotResource: {
+            /**
+             * Format: date-time
+             * @description When it was recorded, from the event log; absent when the log no longer holds it.
+             */
+            built_at?: string | null;
+            /** @description The commit it was built at. */
+            commit: string;
+            /** @description What it was built from: a digest of its base, build command and lockfiles. */
+            key: string;
+            /**
+             * Format: int64
+             * @description The bytes of its layer blobs; absent until the blob store reports sizes.
+             */
+            size_bytes?: number | null;
+            /** @description The snapshot's id. */
+            snapshot: string;
+        };
         /** @description What the sandboxes placed on a worker hold of it, by their limits. */
         WorkerAllocation: {
             /**
@@ -1719,12 +1779,13 @@ export interface operations {
     };
     getChangeDiff: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The revision, from 1; the latest when omitted. */
+                revision?: number;
+            };
             header?: never;
             path: {
                 id: string;
-                /** @description The revision, from 1; the latest when omitted. */
-                revision: number | null;
             };
             cookie?: never;
         };
@@ -2275,6 +2336,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listRepoSnapshots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarmSnapshotResource"][];
+                };
             };
             404: {
                 headers: {
@@ -2911,12 +3001,13 @@ export interface operations {
     };
     getTaskTranscript: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The first position to return; 0 when absent. */
+                after?: number;
+            };
             header?: never;
             path: {
                 id: string;
-                /** @description The first position to return; 0 when absent. */
-                after: number;
             };
             cookie?: never;
         };

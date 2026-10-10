@@ -33,6 +33,14 @@ export function JobPage({ id }: { id: string }) {
           <Fact label="Job">
             <ShortId id={id} />
           </Fact>
+          {job.data?.started_at ? (
+            <Fact label="Started">{format.time(job.data.started_at)}</Fact>
+          ) : null}
+          {job.data?.started_at && job.data.ended_at ? (
+            <Fact label="Took">
+              {format.duration(Date.parse(job.data.ended_at) - Date.parse(job.data.started_at))}
+            </Fact>
+          ) : null}
           {job.data?.argv.length ? (
             <code className="max-w-full truncate rounded bg-muted px-1.5 py-0.5 text-sm text-foreground">
               {job.data.argv.join(" ")}

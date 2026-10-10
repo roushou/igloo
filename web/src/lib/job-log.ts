@@ -14,6 +14,8 @@ export type LogSnapshot = {
   lines: readonly LogLine[];
   /** The finished job, from the stream's last event. */
   job: Job | null;
+  /** When the browser last received output, in milliseconds; `null` before any. */
+  lastOutputAt: number | null;
 };
 
 /** Opens a job's output stream after event `lastId` (none the first time). */
@@ -35,9 +37,16 @@ export class JobLog {
   private readonly partial: Record<LogLine["stream"], string> = { stdout: "", stderr: "" };
   private state: LogState = "loading";
   private job: Job | null = null;
+  private lastOutputAt: number | null = null;
   private lastId: string | null = null;
   private abort: AbortController | null = null;
-  private snapshot: LogSnapshot = { version: 0, state: "loading", lines: [], job: null };
+  private snapshot: LogSnapshot = {
+    version: 0,
+    state: "loading",
+    lines: [],
+    job: null,
+    lastOutputAt: null,
+  };
   private readonly listeners = new Set<() => void>();
 
   constructor(
@@ -79,6 +88,7 @@ export class JobLog {
       state: this.state,
       lines: partial.length ? [...this.lines, ...partial] : this.lines.slice(),
       job: this.job,
+      lastOutputAt: this.lastOutputAt,
     };
     for (const listener of this.listeners) listener();
   }
@@ -132,6 +142,7 @@ export class JobLog {
           if (frame.id !== null) this.lastId = frame.id;
           if (frame.event === "stdout" || frame.event === "stderr") {
             this.append(frame.event, frame.data);
+            this.lastOutputAt = Date.now();
             changed = true;
           } else if (frame.event === "end") {
             this.flushPartials();

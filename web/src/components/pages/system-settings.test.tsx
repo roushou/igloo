@@ -244,3 +244,42 @@ describe("Repository", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("the value is too long");
   });
 });
+
+describe("System snapshots", () => {
+  it("lists the repository's warm and agent snapshots with size and build time", async () => {
+    signIn();
+    stubServer(TOKEN, [REPO], {
+      ...repoRoutes,
+      "GET /v1/workers": [],
+      "GET /v1/sandboxes": { items: [] },
+      [`GET /v1/repos/${REPO.id}/snapshots`]: [
+        {
+          key: id("key", 1),
+          snapshot: id("snap", 1),
+          commit: "c".repeat(40),
+          size_bytes: 3 * 1024 * 1024 * 1024,
+          built_at: "2026-01-01T09:00:00Z",
+        },
+        { key: id("key", 2), snapshot: id("snap", 2), commit: "d".repeat(40) },
+      ],
+    });
+    renderApp("/system");
+    const table = await screen.findByRole("table", { name: "Snapshots" });
+    // A header row, then one row per recorded snapshot.
+    await within(table).findByText("3.0 GiB");
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(within(table).getAllByRole("time")).toHaveLength(1);
+  });
+
+  it("says when none was built", async () => {
+    signIn();
+    stubServer(TOKEN, [REPO], {
+      ...repoRoutes,
+      "GET /v1/workers": [],
+      "GET /v1/sandboxes": { items: [] },
+      [`GET /v1/repos/${REPO.id}/snapshots`]: [],
+    });
+    renderApp("/system");
+    expect(await screen.findByText("No snapshot has been built.")).toBeInTheDocument();
+  });
+});

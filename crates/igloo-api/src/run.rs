@@ -57,6 +57,14 @@ pub struct CheckResource {
     /// Why it did not complete.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// When its job's process started; absent until it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub started_at: Option<Timestamp>,
+    /// When its job ended; absent until it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub ended_at: Option<Timestamp>,
 }
 
 /// A run of a change's revision.
@@ -84,6 +92,13 @@ pub struct RunResource {
     /// When it started.
     #[schema(value_type = String, format = DateTime)]
     pub started_at: Timestamp,
+    /// When it ended, passed, failed or errored; absent while it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub ended_at: Option<Timestamp>,
+    /// The sandbox its checks run in; absent until they start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
 }
 
 /// A page of runs, newest first.
@@ -115,7 +130,23 @@ impl CheckResource {
             job: None,
             exit_code: None,
             reason: None,
+            started_at: None,
+            ended_at: None,
         }
+    }
+
+    /// Sets when its job's process started.
+    #[must_use]
+    pub const fn with_started_at(mut self, at: Timestamp) -> Self {
+        self.started_at = Some(at);
+        self
+    }
+
+    /// Sets when its job ended.
+    #[must_use]
+    pub const fn with_ended_at(mut self, at: Timestamp) -> Self {
+        self.ended_at = Some(at);
+        self
     }
 
     /// Sets the job.
@@ -160,7 +191,23 @@ impl RunResource {
             warm_job: None,
             checks: Vec::new(),
             started_at,
+            ended_at: None,
+            sandbox: None,
         }
+    }
+
+    /// Sets when it ended.
+    #[must_use]
+    pub const fn with_ended_at(mut self, at: Timestamp) -> Self {
+        self.ended_at = Some(at);
+        self
+    }
+
+    /// Sets the sandbox of its checks.
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: impl Into<String>) -> Self {
+        self.sandbox = Some(sandbox.into());
+        self
     }
 
     /// Sets why it errored.

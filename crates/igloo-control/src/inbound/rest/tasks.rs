@@ -152,6 +152,7 @@ pub(crate) async fn cancel_task(
 
 /// Where a transcript is read from.
 #[derive(serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(super) struct TranscriptQuery {
     /// The first position to return; 0 when absent.
     #[serde(default)]

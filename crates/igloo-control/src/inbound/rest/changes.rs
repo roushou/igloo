@@ -10,6 +10,7 @@ use igloo_api::change::{
 use igloo_api::list::ListOrder;
 use igloo_api::list::PhaseFilter;
 use igloo_api::problem::Problem;
+use igloo_core::Entity;
 use igloo_core::change::{Change, ChangeId};
 use igloo_core::repo::RepoId;
 
@@ -416,8 +417,20 @@ async fn load(state: &ApiState, id: ChangeId) -> Result<ChangeResource, ApiError
 
 /// The change as a resource; an open change carries its merge readiness.
 async fn resource(state: &ApiState, change: &Change) -> Result<ChangeResource, ApiError> {
-    let resource = ChangeResource::from(change);
+    let mut resource = ChangeResource::from(change);
     if resource.phase != ChangePhase::Open {
+        let at = state
+            .timings
+            .span(&change.id().to_string())
+            .await
+            .map_err(AppError::from)?
+            .ended;
+        if let Some(at) = at {
+            resource = match resource.phase {
+                ChangePhase::Merged => resource.with_merged_at(at),
+                _ => resource.with_closed_at(at),
+            };
+        }
         return Ok(resource);
     }
     let readiness = state.merger.readiness(change).await?;

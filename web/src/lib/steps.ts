@@ -1,4 +1,4 @@
-import type { Run, Task } from "@/api/client";
+import type { Check, Run, Task } from "@/api/client";
 
 /** What a running task is doing now. */
 export function taskStep(task: Pick<Task, "phase" | "turns">): string {
@@ -25,4 +25,30 @@ export function runStep(run: Pick<Run, "phase" | "checks">): string {
         : `Checking (${progress})`;
     }
   }
+}
+
+/** How long a check took, in milliseconds, once its job started and ended; `null` before. */
+export function checkDuration(check: Pick<Check, "started_at" | "ended_at">): number | null {
+  if (!check.started_at || !check.ended_at) return null;
+  return Date.parse(check.ended_at) - Date.parse(check.started_at);
+}
+
+/**
+ * How long the check `name` took in the latest run of `runs` that started before `run` and ran
+ * it to the end; `null` when no earlier run did.
+ */
+export function previousDuration(
+  runs: readonly Pick<Run, "id" | "started_at" | "checks">[],
+  run: Pick<Run, "id" | "started_at">,
+  name: string,
+): number | null {
+  const earlier = runs
+    .filter((other) => other.id !== run.id && other.started_at < run.started_at)
+    .sort((a, b) => b.started_at.localeCompare(a.started_at));
+  for (const other of earlier) {
+    const check = other.checks.find((check) => check.name === name);
+    const duration = check ? checkDuration(check) : null;
+    if (duration !== null) return duration;
+  }
+  return null;
 }

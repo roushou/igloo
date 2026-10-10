@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
+import { format } from "@/lib/format";
 import { id, job, run } from "@/test/fixtures";
 import { REPO, renderApp, StubEvents, stubServer } from "@/test/render-app";
 import { signIn, TOKEN } from "@/test/server";
@@ -145,6 +146,56 @@ describe("Run", () => {
       `/jobs/${id("job", 102)}`,
     );
     expect(screen.getByRole("link", { name: "Warm-up log" })).toBeInTheDocument();
+  });
+
+  it("shows when a run ended, its sandbox, and how long each check took or has run", async () => {
+    signIn();
+    const finished = run(3, {
+      phase: "failed",
+      change: id("chg", 3),
+      started_at: "2026-01-01T10:00:00Z",
+      ended_at: "2026-01-01T10:05:00Z",
+      sandbox: id("sbx", 3),
+      checks: [
+        {
+          name: "lint",
+          status: "passed",
+          job: id("job", 1),
+          started_at: "2026-01-01T10:00:00Z",
+          ended_at: "2026-01-01T10:00:42Z",
+        },
+        {
+          name: "test",
+          status: "started",
+          job: id("job", 2),
+          started_at: new Date().toISOString(),
+        },
+      ],
+    });
+    const before = run(2, {
+      phase: "passed",
+      change: id("chg", 3),
+      started_at: "2026-01-01T09:00:00Z",
+      checks: [
+        {
+          name: "test",
+          status: "passed",
+          job: id("job", 5),
+          started_at: "2026-01-01T09:00:00Z",
+          ended_at: "2026-01-01T09:03:05Z",
+        },
+      ],
+    });
+    stubServer(TOKEN, [REPO], {
+      [`GET /v1/runs/${finished.id}`]: finished,
+      [`GET /v1/changes/${id("chg", 3)}/runs`]: [before, finished],
+    });
+    renderApp(`/runs/${finished.id}`);
+    const checks = await screen.findByRole("list", { name: "Checks" });
+    expect(await within(checks).findByText("42s")).toBeInTheDocument();
+    expect(await within(checks).findByText(/previously 3m 05s/)).toBeInTheDocument();
+    expect(screen.getByText("Ended")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: format.shortId(id("sbx", 3)) })).toBeInTheDocument();
   });
 
   it("shows a running run's step", async () => {

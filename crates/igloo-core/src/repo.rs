@@ -211,6 +211,11 @@ impl Repo {
         self.warm.get(key)
     }
 
+    /// Every recorded warm snapshot with its key, in key order.
+    pub fn warm_snapshots(&self) -> impl Iterator<Item = (&Digest, &WarmSnapshot)> {
+        self.warm.iter()
+    }
+
     fn record(&mut self, event: RepoEvent) {
         self.apply(&event);
         self.events.push(event);

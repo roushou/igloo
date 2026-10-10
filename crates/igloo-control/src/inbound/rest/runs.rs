@@ -166,7 +166,27 @@ async fn resource(state: &ApiState, run: &Run) -> Result<RunResource, ApiError> 
             .and_then(|build| build.job()),
         None => None,
     };
-    Ok(convert(run, warm_job))
+    let mut resource = convert(run, warm_job);
+    if run.outcome().is_some()
+        && let Some(at) = state
+            .timings
+            .span(&run.id().to_string())
+            .await
+            .map_err(AppError::from)?
+            .ended
+    {
+        resource = resource.with_ended_at(at);
+    }
+    if let Some(sandbox) = run.sandbox() {
+        resource = resource.with_sandbox(sandbox.to_string());
+    }
+    for check in &mut resource.checks {
+        let Some(job) = &check.job else { continue };
+        let span = state.timings.span(job).await.map_err(AppError::from)?;
+        check.started_at = span.started;
+        check.ended_at = span.ended;
+    }
+    Ok(resource)
 }
 
 fn convert(run: &Run, warm_job: Option<igloo_core::job::JobId>) -> RunResource {

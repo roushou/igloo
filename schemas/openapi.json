@@ -394,14 +394,11 @@
           },
           {
             "name": "revision",
-            "in": "path",
+            "in": "query",
             "description": "The revision, from 1; the latest when omitted.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -1203,6 +1200,46 @@
       }
     },
     "/v1/repos/{id}/snapshots": {
+      "get": {
+        "tags": [
+          "repos"
+        ],
+        "summary": "Lists the snapshots a repository recorded under keys, warm and agent, ordered by key. Sizes\nare not reported yet.",
+        "operationId": "listRepoSnapshots",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WarmSnapshotResource"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "repos"
@@ -2114,9 +2151,9 @@
           },
           {
             "name": "after",
-            "in": "path",
+            "in": "query",
             "description": "The first position to return; 0 when absent.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "integer",
               "format": "int32",
@@ -2272,6 +2309,14 @@
             },
             "description": "Human approvals, oldest first."
           },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was closed; present only once closed."
+          },
           "comments": {
             "type": "array",
             "items": {
@@ -2282,6 +2327,14 @@
           "id": {
             "type": "string",
             "description": "Its id (`chg_...`)."
+          },
+          "merged_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was merged; present only once merged."
           },
           "merged_commit": {
             "type": [
@@ -2338,6 +2391,14 @@
           "status"
         ],
         "properties": {
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its job ended; absent until it has."
+          },
           "exit_code": {
             "type": [
               "integer",
@@ -2363,6 +2424,14 @@
               "null"
             ],
             "description": "Why it did not complete."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its job's process started; absent until it has."
           },
           "status": {
             "$ref": "#/components/schemas/CheckStatus",
@@ -2862,6 +2931,14 @@
             },
             "description": "The program and its arguments."
           },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it finished, failed or was cancelled; absent until it has."
+          },
           "env": {
             "type": "object",
             "description": "Extra environment.",
@@ -2905,6 +2982,14 @@
               "type": "string"
             },
             "description": "The repository secrets it is given, by name."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its process started; absent until it has."
           },
           "submitted_at": {
             "type": "string",
@@ -3263,6 +3348,14 @@
             "type": "string",
             "description": "The commit checked."
           },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it ended, passed, failed or errored; absent while it runs."
+          },
           "error": {
             "type": [
               "string",
@@ -3283,6 +3376,13 @@
             "format": "int32",
             "description": "The revision's number.",
             "minimum": 0
+          },
+          "sandbox": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sandbox its checks run in; absent until they start."
           },
           "started_at": {
             "type": "string",
@@ -3839,6 +3939,46 @@
           "succeeded",
           "failed"
         ]
+      },
+      "WarmSnapshotResource": {
+        "type": "object",
+        "description": "A snapshot a repository recorded under a key: a warm snapshot, or an agent snapshot over one.",
+        "required": [
+          "key",
+          "snapshot",
+          "commit"
+        ],
+        "properties": {
+          "built_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was recorded, from the event log; absent when the log no longer holds it."
+          },
+          "commit": {
+            "type": "string",
+            "description": "The commit it was built at."
+          },
+          "key": {
+            "type": "string",
+            "description": "What it was built from: a digest of its base, build command and lockfiles."
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The bytes of its layer blobs; absent until the blob store reports sizes.",
+            "minimum": 0
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "The snapshot's id."
+          }
+        }
       },
       "WorkerAllocation": {
         "type": "object",

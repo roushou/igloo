@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FileText } from "lucide-react";
+import type { Run } from "@/api/client";
 import { ChecksStrip } from "@/components/checks-strip";
 import { CheckTime, Timing } from "@/components/elapsed";
 import { Await, Fact, Page, Section } from "@/components/page";
@@ -10,7 +11,7 @@ import { StatusPill } from "@/components/status-pill";
 import { format } from "@/lib/format";
 import { queries } from "@/lib/queries";
 import { status } from "@/lib/status";
-import { runStep } from "@/lib/steps";
+import { previousDuration, runStep } from "@/lib/steps";
 import { timing } from "@/lib/timing";
 
 /** A run: the checks of one revision, with a link to each check's log. */
@@ -58,9 +59,25 @@ export function RunPage({ id }: { id: string }) {
                 <Fact label="Commit">
                   <ShortId id={run.commit} />
                 </Fact>
+                {run.sandbox ? (
+                  <Fact label="Sandbox">
+                    <Link
+                      to="/system"
+                      search={{ sandbox: run.sandbox }}
+                      className="font-mono text-sm hover:underline"
+                    >
+                      {format.shortId(run.sandbox)}
+                    </Link>
+                  </Fact>
+                ) : null}
                 <Fact label="Started">
                   <RelativeTime at={run.started_at} />
                 </Fact>
+                {run.ended_at ? (
+                  <Fact label="Ended">
+                    <RelativeTime at={run.ended_at} />
+                  </Fact>
+                ) : null}
               </>
             }
           >
@@ -97,6 +114,7 @@ export function RunPage({ id }: { id: string }) {
                     ) : null}
                     <div className="ml-auto flex items-center gap-2">
                       <CheckTime check={check} />
+                      <PreviousDuration run={run} name={check.name} />
                       {check.job ? (
                         <Link
                           to="/jobs/$id"
@@ -115,5 +133,14 @@ export function RunPage({ id }: { id: string }) {
         );
       }}
     </Await>
+  );
+}
+
+/** "previously 3m 05s": how long check `name` took in the change's previous run that ran it. */
+function PreviousDuration({ run, name }: { run: Run; name: string }) {
+  const runs = useQuery(queries.changeRuns(run.change));
+  const previous = runs.data ? previousDuration(runs.data, run, name) : null;
+  return previous === null ? null : (
+    <span className="text-sm text-muted-foreground">previously {format.duration(previous)}</span>
   );
 }

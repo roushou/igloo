@@ -75,6 +75,30 @@ pub struct JobResource {
     /// When it was submitted.
     #[schema(value_type = String, format = DateTime)]
     pub submitted_at: Timestamp,
+    /// When its process started; absent until it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub started_at: Option<Timestamp>,
+    /// When it finished, failed or was cancelled; absent until it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub ended_at: Option<Timestamp>,
+}
+
+impl JobResource {
+    /// Sets when the process started.
+    #[must_use]
+    pub const fn with_started_at(mut self, at: Timestamp) -> Self {
+        self.started_at = Some(at);
+        self
+    }
+
+    /// Sets when the job ended.
+    #[must_use]
+    pub const fn with_ended_at(mut self, at: Timestamp) -> Self {
+        self.ended_at = Some(at);
+        self
+    }
 }
 
 impl ExecRequest {
@@ -175,6 +199,8 @@ impl From<&Job> for JobResource {
             exit_code,
             failure_reason,
             submitted_at: job.submitted_at(),
+            started_at: None,
+            ended_at: None,
         }
     }
 }

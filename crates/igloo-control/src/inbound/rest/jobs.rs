@@ -154,5 +154,17 @@ pub(super) async fn load(state: &ApiState, id: JobId) -> Result<JobResource, Api
         .await
         .map_err(AppError::from)?
         .ok_or_else(|| ApiError::not_found("job.not_found"))?;
-    Ok(JobResource::from(job.entity()))
+    let span = state
+        .timings
+        .span(&id.to_string())
+        .await
+        .map_err(AppError::from)?;
+    let mut resource = JobResource::from(job.entity());
+    if let Some(at) = span.started {
+        resource = resource.with_started_at(at);
+    }
+    if let Some(at) = span.ended {
+        resource = resource.with_ended_at(at);
+    }
+    Ok(resource)
 }

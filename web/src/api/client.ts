@@ -14,6 +14,7 @@ export type FileDiff = Schemas["FileDiffResource"];
 export type Run = Schemas["RunResource"];
 export type Check = Schemas["CheckResource"];
 export type Job = Schemas["JobResource"];
+export type WarmSnapshot = Schemas["WarmSnapshotResource"];
 export type Sandbox = Schemas["SandboxResource"];
 export type Worker = Schemas["WorkerResource"];
 export type Comment = Schemas["CommentResource"];
@@ -113,15 +114,11 @@ export class ApiClient {
     return unwrap(await this.http.POST("/v1/tasks/{id}/cancel", { params: { path: { id } } }));
   }
 
-  /**
-   * A task's transcript from position `after` on. The server reads `after` from the query string
-   * although its OpenAPI document lists it as a path parameter, so it is given as both.
-   */
+  /** A task's transcript from position `after` on. */
   async transcript(id: string, after: number): Promise<Transcript> {
-    const params = { path: { id, after }, query: { after } };
     return unwrap(
       await this.http.GET("/v1/tasks/{id}/transcript", {
-        params: params as { path: { id: string; after: number } },
+        params: { path: { id }, query: { after } },
       }),
     );
   }
@@ -139,16 +136,11 @@ export class ApiClient {
     return unwrap(await this.http.GET("/v1/changes/{id}", { params: { path: { id } } }));
   }
 
-  /**
-   * The files of a change's revision, the latest when `revision` is omitted. The server reads
-   * `revision` from the query string although its OpenAPI document lists it as a path parameter,
-   * so it is given as both.
-   */
+  /** The files of a change's revision, the latest when `revision` is omitted. */
   async diff(id: string, revision?: number): Promise<ChangeDiff> {
-    const params = { path: { id, revision: revision ?? null }, query: { revision } };
     return unwrap(
       await this.http.GET("/v1/changes/{id}/diff", {
-        params: params as { path: { id: string; revision: number | null } },
+        params: { path: { id }, query: { revision } },
       }),
     );
   }
@@ -209,6 +201,13 @@ export class ApiClient {
 
   async run(id: string): Promise<Run> {
     return unwrap(await this.http.GET("/v1/runs/{id}", { params: { path: { id } } }));
+  }
+
+  /** The warm and agent snapshots a repository recorded. */
+  async repoSnapshots(repo: string): Promise<WarmSnapshot[]> {
+    return unwrap(
+      await this.http.GET("/v1/repos/{id}/snapshots", { params: { path: { id: repo } } }),
+    );
   }
 
   async job(id: string): Promise<Job> {

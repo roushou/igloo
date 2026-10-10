@@ -13,6 +13,7 @@ pub(super) mod runs;
 mod sandboxes;
 mod seals;
 pub(super) mod tasks;
+mod timings;
 mod upload;
 mod workers;
 
@@ -37,6 +38,7 @@ use utoipa_axum::routes;
 
 use self::events::EventRepos;
 use self::idempotency::Idempotency;
+use self::timings::Timings;
 use crate::agents::{Task, TaskQueries, Transcripts};
 use crate::app::{CommandBus, InstallError, PlatformBuilder};
 use crate::ci::{Merger, Run, RunQueries};
@@ -78,6 +80,7 @@ pub(crate) struct ApiState {
     blobs: Arc<dyn BlobStore>,
     logs: Arc<dyn LogStore>,
     events: Arc<dyn EventLog>,
+    timings: Arc<Timings>,
     event_repos: EventRepos,
     pub(super) ids: Arc<dyn IdGenerator>,
     pub(super) auth: DevToken,
@@ -162,6 +165,7 @@ impl RestApi {
                 blobs: Arc::clone(&ports.blobs),
                 logs: Arc::clone(&ports.logs),
                 events: Arc::clone(&ports.events),
+                timings: Arc::new(Timings::new(Arc::clone(&ports.events))),
                 event_repos: EventRepos::new(platform)?,
                 ids: Arc::clone(&ports.ids),
                 auth,
@@ -224,7 +228,7 @@ impl RestApi {
             .routes(routes!(repos::register, repos::list))
             .routes(routes!(repos::get))
             .routes(routes!(repos::list_secrets))
-            .routes(routes!(repos::snapshot))
+            .routes(routes!(repos::snapshot, repos::snapshots))
             .routes(routes!(changes::open, changes::list))
             .routes(routes!(changes::get))
             .routes(routes!(changes::diff))

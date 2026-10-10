@@ -409,6 +409,12 @@ impl Run {
         self.warm_build
     }
 
+    /// The sandbox its checks run in, once they started.
+    #[must_use]
+    pub const fn sandbox(&self) -> Option<SandboxId> {
+        self.sandbox
+    }
+
     /// How it ended, once it has.
     #[must_use]
     pub const fn outcome(&self) -> Option<&RunOutcome> {

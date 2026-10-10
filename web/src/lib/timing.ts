@@ -8,28 +8,27 @@ export type Times = {
 };
 
 /**
- * Where each thing's times come from. A function returns null while the server does not report
- * the times; every page already renders `Timing` from its result, so a field the server gains is
- * wired by reading it here.
+ * Where each thing's times come from, as the server reports them. A function returns null while
+ * a thing has not started; every page renders `Timing` from its result.
  */
 export const timing = {
-  /** A run starts at `started_at`; its end is not reported yet. */
+  /** A run starts at `started_at` and ends once it has an outcome. */
   run(run: Run): Times {
-    return { startedAt: run.started_at };
+    return { startedAt: run.started_at, endedAt: run.ended_at };
   },
 
-  /** A check's times come from its job, which the server does not time yet. */
-  check(_check: Check): Times | null {
-    return null;
+  /** A check's times are its job's; null until its job starts. */
+  check(check: Check): Times | null {
+    return check.started_at ? { startedAt: check.started_at, endedAt: check.ended_at } : null;
   },
 
-  /** A job's start, end and last output are not reported yet. */
-  job(_job: Job): Times | null {
-    return null;
+  /** A job's start and end; null until it starts. Its last output is measured in the browser. */
+  job(job: Job): Times | null {
+    return job.started_at ? { startedAt: job.started_at, endedAt: job.ended_at } : null;
   },
 
-  /** When a change was merged or closed; the server does not record it yet. */
-  changeEnd(_change: Change): string | null {
-    return null;
+  /** When a change was merged or closed, if it was. */
+  changeEnd(change: Change): string | null {
+    return change.merged_at ?? change.closed_at ?? null;
   },
 };

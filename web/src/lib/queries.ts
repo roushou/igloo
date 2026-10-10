@@ -10,6 +10,7 @@ export const queryKeys = {
   repos: () => ["repos"] as const,
   repo: (id: string) => ["repo", id] as const,
   secrets: (repo: string) => ["repo", repo, "secrets"] as const,
+  repoSnapshots: (repo: string) => ["repo", repo, "snapshots"] as const,
   tasks: (repo?: string | null) => (repo ? (["tasks", repo] as const) : (["tasks"] as const)),
   task: (id: string) => ["task", id] as const,
   transcript: (id: string) => ["task", id, "transcript"] as const,
@@ -34,6 +35,12 @@ export const queries = {
 
   secrets: (repo: string) =>
     queryOptions({ queryKey: queryKeys.secrets(repo), queryFn: () => api.secrets(repo) }),
+
+  repoSnapshots: (repo: string) =>
+    queryOptions({
+      queryKey: queryKeys.repoSnapshots(repo),
+      queryFn: () => api.repoSnapshots(repo),
+    }),
 
   tasks: (repo: string, phases: TaskPhase[] = []) =>
     queryOptions({
