@@ -4,6 +4,7 @@ use igloo_core::job::{FencingToken, Job, JobFailure, JobSpec, Lease};
 use igloo_core::process::OutputStream;
 use igloo_core::sandbox::{DesiredState, FailureReason, NetworkPolicy, Sandbox, SandboxPhase};
 use igloo_core::snapshot::{MediaType, SnapshotLayer};
+use igloo_core::terminal::{TerminalFailure, TerminalId, TerminalOutcome, TerminalSize};
 use igloo_core::worker::{Arch, Capabilities, NoRuntime, Os, ProtocolVersion, RuntimeKind, Usage};
 use igloo_core::{Digest, Entity, Generation, Resource};
 
@@ -327,6 +328,82 @@ impl TryFrom<v1::JobFailure> for JobFailure {
     }
 }
 
+impl From<TerminalSize> for v1::TerminalSize {
+    fn from(size: TerminalSize) -> Self {
+        Self {
+            cols: u32::from(size.cols()),
+            rows: u32::from(size.rows()),
+        }
+    }
+}
+
+impl TryFrom<&v1::TerminalSize> for TerminalSize {
+    type Error = ProtocolError;
+
+    fn try_from(size: &v1::TerminalSize) -> Result<Self, Self::Error> {
+        Self::new(size.cols, size.rows).map_err(|error| ProtocolError::Invalid {
+            field: "size",
+            reason: error.to_string(),
+        })
+    }
+}
+
+impl From<TerminalFailure> for v1::TerminalFailure {
+    fn from(failure: TerminalFailure) -> Self {
+        match failure {
+            TerminalFailure::SandboxUnavailable => Self::SandboxUnavailable,
+            TerminalFailure::ExecutionError => Self::ExecutionError,
+            TerminalFailure::Closed => Self::Closed,
+        }
+    }
+}
+
+impl TryFrom<v1::TerminalFailure> for TerminalFailure {
+    type Error = ProtocolError;
+
+    fn try_from(failure: v1::TerminalFailure) -> Result<Self, Self::Error> {
+        match failure {
+            v1::TerminalFailure::SandboxUnavailable => Ok(Self::SandboxUnavailable),
+            v1::TerminalFailure::ExecutionError => Ok(Self::ExecutionError),
+            v1::TerminalFailure::Closed => Ok(Self::Closed),
+            v1::TerminalFailure::Unspecified => Err(ProtocolError::Missing("failure")),
+        }
+    }
+}
+
+impl v1::TerminalExit {
+    /// The report that terminal `terminal` ended with `outcome`.
+    #[must_use]
+    pub fn new(terminal: TerminalId, outcome: TerminalOutcome) -> Self {
+        let outcome = match outcome {
+            TerminalOutcome::Exited(code) => v1::terminal_exit::Outcome::ExitCode(code),
+            TerminalOutcome::Failed(failure) => {
+                v1::terminal_exit::Outcome::Failure(v1::TerminalFailure::from(failure).into())
+            }
+        };
+        Self {
+            terminal_id: terminal.to_string(),
+            outcome: Some(outcome),
+        }
+    }
+}
+
+impl TryFrom<&v1::TerminalExit> for TerminalOutcome {
+    type Error = ProtocolError;
+
+    fn try_from(exit: &v1::TerminalExit) -> Result<Self, Self::Error> {
+        match exit.outcome {
+            Some(v1::terminal_exit::Outcome::ExitCode(code)) => Ok(Self::Exited(code)),
+            Some(v1::terminal_exit::Outcome::Failure(failure)) => {
+                let failure = v1::TerminalFailure::try_from(failure)
+                    .map_err(|_| ProtocolError::Missing("failure"))?;
+                TerminalFailure::try_from(failure).map(Self::Failed)
+            }
+            None => Err(ProtocolError::Missing("outcome")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +497,38 @@ mod tests {
             let status = v1::SandboxStatus::new("sbx_x", phase, Generation::INITIAL);
             assert_eq!(SandboxPhase::try_from(&status), Ok(phase));
         }
+    }
+
+    #[test]
+    fn terminal_sizes_round_trip_and_reject_empty_screens() {
+        let size = TerminalSize::new(132, 43).expect("size");
+        assert_eq!(
+            TerminalSize::try_from(&v1::TerminalSize::from(size)),
+            Ok(size)
+        );
+        assert!(matches!(
+            TerminalSize::try_from(&v1::TerminalSize { cols: 0, rows: 24 }),
+            Err(ProtocolError::Invalid { field: "size", .. })
+        ));
+    }
+
+    #[test]
+    fn terminal_exits_round_trip() {
+        let terminal: TerminalId = "term_00000000000000000000000007".parse().expect("id");
+        for outcome in [
+            TerminalOutcome::Exited(0),
+            TerminalOutcome::Exited(130),
+            TerminalOutcome::Failed(TerminalFailure::SandboxUnavailable),
+            TerminalOutcome::Failed(TerminalFailure::ExecutionError),
+            TerminalOutcome::Failed(TerminalFailure::Closed),
+        ] {
+            let exit = v1::TerminalExit::new(terminal, outcome);
+            assert_eq!(exit.terminal_id, terminal.to_string());
+            assert_eq!(TerminalOutcome::try_from(&exit), Ok(outcome));
+        }
+        assert_eq!(
+            TerminalOutcome::try_from(&v1::TerminalExit::default()),
+            Err(ProtocolError::Missing("outcome"))
+        );
     }
 }

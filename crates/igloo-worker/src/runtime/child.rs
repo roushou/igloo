@@ -1,4 +1,3 @@
-use std::os::unix::process::ExitStatusExt;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -66,11 +65,7 @@ impl Supervised {
         };
         let waiting = async {
             let ended = tokio::select! {
-                status = self.child.wait() => return status.map(|status| {
-                    ExitOutcome::Exited(
-                        status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
-                    )
-                }),
+                status = self.child.wait() => return status.map(ExitOutcome::from),
                 () = tokio::time::sleep(timeout) => ExitOutcome::TimedOut,
                 () = cancel.cancelled() => ExitOutcome::Cancelled,
             };

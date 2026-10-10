@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use igloo_core::sandbox::{NetworkPolicy, SandboxId};
+use igloo_core::terminal::TerminalSize;
 use igloo_core::worker::RuntimeKind;
 use serde_json::{Value, json};
 use tokio::process::Command;
@@ -13,7 +14,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::child::Supervised;
 use super::netns::NetworkNamespaces;
-use super::{ExitOutcome, LocalSandbox, OutputChunk, Process, RuntimeError, SandboxRuntime};
+use super::pty::PtyProcess;
+use super::{
+    ExitOutcome, LocalSandbox, OutputChunk, Process, RuntimeError, SandboxRuntime, TerminalIo,
+    TerminalProcess,
+};
 
 /// Runs every job as a container over its sandbox's root file system, through an OCI runtime
 /// binary (youki, crun or runc).
@@ -34,6 +39,20 @@ pub struct OciRuntime {
     namespaces: NetworkNamespaces,
     next: AtomicU64,
     containers: Mutex<HashMap<SandboxId, HashSet<String>>>,
+}
+
+/// What to run in a container.
+struct Launch<'a> {
+    argv: &'a [String],
+    env: &'a BTreeMap<String, String>,
+    /// The terminal's screen, for a container with a pseudo-terminal.
+    terminal: Option<TerminalSize>,
+}
+
+/// A container created for one process.
+struct Container {
+    name: String,
+    bundle: PathBuf,
 }
 
 impl OciRuntime {
@@ -106,6 +125,49 @@ impl OciRuntime {
         }
     }
 
+    /// Writes the bundle of a container running `launch` in `sandbox` and tracks the container.
+    async fn create(
+        &self,
+        sandbox: &LocalSandbox,
+        launch: &Launch<'_>,
+    ) -> Result<Container, RuntimeError> {
+        if launch.argv.is_empty() {
+            return Err(RuntimeError::Spawn(std::io::Error::other("empty argv")));
+        }
+        let number = self.next.fetch_add(1, Ordering::Relaxed);
+        let name = format!("igloo-{}-{number}", sandbox.id);
+        let bundle = Self::bundles(sandbox).join(number.to_string());
+        tokio::fs::create_dir_all(&bundle).await?;
+        let hosts = bundle.join("hosts");
+        tokio::fs::write(&hosts, Self::hosts(Self::HOSTNAME)).await?;
+        let config = self.config(sandbox, launch, Self::HOSTNAME, &hosts);
+        let bytes = serde_json::to_vec_pretty(&config).map_err(std::io::Error::other)?;
+        tokio::fs::write(bundle.join("config.json"), bytes).await?;
+        // A container left by an earlier worker run under the same name would block this one.
+        self.delete(&name).await;
+        self.track(sandbox.id, &name, true);
+        Ok(Container { name, bundle })
+    }
+
+    /// The commands that run `container` in the foreground and kill it.
+    fn commands(&self, container: &Container) -> (Command, Command) {
+        let mut run = self.command();
+        run.arg("run")
+            .arg("--bundle")
+            .arg(&container.bundle)
+            .arg(&container.name);
+        let mut kill = self.command();
+        kill.args(["kill", &container.name, "KILL"]);
+        (run, kill)
+    }
+
+    /// Deletes `container` and its bundle once its process ended.
+    async fn release(&self, sandbox: &LocalSandbox, container: &Container) {
+        self.delete(&container.name).await;
+        self.track(sandbox.id, &container.name, false);
+        Self::remove_dir(&container.bundle).await;
+    }
+
     fn bundles(sandbox: &LocalSandbox) -> PathBuf {
         sandbox
             .root
@@ -124,14 +186,14 @@ impl OciRuntime {
     fn config(
         &self,
         sandbox: &LocalSandbox,
-        process: &Process,
+        launch: &Launch<'_>,
         hostname: &str,
         hosts: &Path,
     ) -> Value {
         let mut env: Vec<String> = sandbox
             .env
             .iter()
-            .chain(&process.env)
+            .chain(launch.env)
             .map(|(key, value)| format!("{key}={value}"))
             .collect();
         if !env.iter().any(|entry| entry.starts_with("PATH=")) {
@@ -168,12 +230,12 @@ impl OciRuntime {
         }
         let memory = u64::from(sandbox.limits.memory_mib()) * 1024 * 1024;
         let quota = u64::from(sandbox.limits.millicpus()) * 100;
-        json!({
+        let mut config = json!({
             "ociVersion": "1.0.2",
             "process": {
-                "terminal": false,
+                "terminal": launch.terminal.is_some(),
                 "user": { "uid": 0, "gid": 0 },
-                "args": process.argv,
+                "args": launch.argv,
                 "env": env,
                 "cwd": "/workspace",
                 "noNewPrivileges": true,
@@ -206,7 +268,12 @@ impl OciRuntime {
                     "/proc/sysrq-trigger",
                 ],
             },
-        })
+        });
+        if let Some(size) = launch.terminal {
+            config["process"]["consoleSize"] =
+                json!({ "height": size.rows(), "width": size.cols() });
+        }
+        config
     }
 
     fn mounts() -> Vec<Value> {
@@ -275,33 +342,42 @@ impl SandboxRuntime for OciRuntime {
         output: mpsc::Sender<OutputChunk>,
         cancel: CancellationToken,
     ) -> Result<ExitOutcome, RuntimeError> {
-        if process.argv.is_empty() {
-            return Err(RuntimeError::Spawn(std::io::Error::other("empty argv")));
-        }
-        let number = self.next.fetch_add(1, Ordering::Relaxed);
-        let container = format!("igloo-{}-{number}", sandbox.id);
-        let bundle = Self::bundles(sandbox).join(number.to_string());
-        tokio::fs::create_dir_all(&bundle).await?;
-        let hosts = bundle.join("hosts");
-        tokio::fs::write(&hosts, Self::hosts(Self::HOSTNAME)).await?;
-        let config = self.config(sandbox, &process, Self::HOSTNAME, &hosts);
-        let bytes = serde_json::to_vec_pretty(&config).map_err(std::io::Error::other)?;
-        tokio::fs::write(bundle.join("config.json"), bytes).await?;
-        // A container left by an earlier worker run under the same name would block this one.
-        self.delete(&container).await;
-
-        let mut run = self.command();
-        run.arg("run").arg("--bundle").arg(&bundle).arg(&container);
-        let mut kill = self.command();
-        kill.args(["kill", &container, "KILL"]);
-        self.track(sandbox.id, &container, true);
-        let outcome = match Supervised::spawn(&mut run, Some(kill)) {
+        let launch = Launch {
+            argv: &process.argv,
+            env: &process.env,
+            terminal: None,
+        };
+        let container = self.create(sandbox, &launch).await?;
+        let (run, kill) = self.commands(&container);
+        let outcome = match Supervised::spawn(&mut { run }, Some(kill)) {
             Ok(child) => child.wait(process.timeout, &output, &cancel).await,
             Err(error) => Err(error),
         };
-        self.delete(&container).await;
-        self.track(sandbox.id, &container, false);
-        Self::remove_dir(&bundle).await;
+        self.release(sandbox, &container).await;
+        outcome
+    }
+
+    async fn exec_terminal(
+        &self,
+        sandbox: &LocalSandbox,
+        process: TerminalProcess,
+        io: TerminalIo,
+        cancel: CancellationToken,
+    ) -> Result<ExitOutcome, RuntimeError> {
+        let launch = Launch {
+            argv: &process.argv,
+            env: &process.env,
+            terminal: Some(process.size),
+        };
+        let container = self.create(sandbox, &launch).await?;
+        let (run, kill) = self.commands(&container);
+        // The runtime binary runs in the foreground on the pseudo-terminal and relays it to the
+        // container's own terminal, resizes included.
+        let outcome = match PtyProcess::spawn(&mut { run }, process.size, Some(kill)) {
+            Ok(child) => child.run(io, &cancel).await,
+            Err(error) => Err(error),
+        };
+        self.release(sandbox, &container).await;
         outcome
     }
 
@@ -340,6 +416,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
+    use crate::runtime::TerminalInput;
     use igloo_core::Id;
     use igloo_core::sandbox::ResourceLimits;
     use uuid::Uuid;
@@ -368,7 +445,7 @@ mod tests {
             }
             std::fs::copy(&busybox, root.join("bin/busybox")).expect("busybox");
             for tool in [
-                "sh", "ls", "cat", "dd", "echo", "pwd", "sleep", "test", "ping",
+                "sh", "ls", "cat", "dd", "echo", "pwd", "sleep", "test", "ping", "stty",
             ] {
                 std::os::unix::fs::symlink("busybox", root.join("bin").join(tool)).expect("link");
             }
@@ -523,5 +600,72 @@ mod tests {
         let ((outcome, _), ()) =
             tokio::join!(fixture.run_cancellable("sleep 30", cancel), cancelling);
         assert_eq!(outcome, ExitOutcome::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_shell_in_a_container_echoes_input_honours_resizes_and_reports_its_exit_code() {
+        let Some(fixture) = Fixture::start(NetworkPolicy::DenyAll).await else {
+            return;
+        };
+        let size = TerminalSize::new(100, 30).expect("size");
+        let process = TerminalProcess {
+            argv: vec!["sh".into()],
+            env: BTreeMap::from([("TERM".into(), "xterm-256color".into())]),
+            size,
+        };
+        let (typed, input) = mpsc::channel(16);
+        let (output, mut printed) = mpsc::channel(64);
+        let io = TerminalIo { input, output };
+        let running =
+            fixture
+                .runtime
+                .exec_terminal(&fixture.sandbox, process, io, CancellationToken::new());
+        let driving = async {
+            let mut seen = String::new();
+            for (keys, expect) in [
+                ("echo hello-$((6*7))\n", "hello-42"),
+                ("stty size\n", "30 100"),
+            ] {
+                typed
+                    .send(TerminalInput::Data(keys.as_bytes().to_vec()))
+                    .await
+                    .expect("input");
+                Fixture::read_until(&mut printed, &mut seen, expect).await;
+            }
+            let resized = TerminalSize::new(132, 43).expect("size");
+            typed
+                .send(TerminalInput::Resize(resized))
+                .await
+                .expect("resize");
+            typed
+                .send(TerminalInput::Data(b"stty size\n".to_vec()))
+                .await
+                .expect("input");
+            Fixture::read_until(&mut printed, &mut seen, "43 132").await;
+            typed
+                .send(TerminalInput::Data(b"exit 7\n".to_vec()))
+                .await
+                .expect("input");
+        };
+        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(running, driving)
+        })
+        .await
+        .expect("the shell within 30 s");
+        assert_eq!(outcome.expect("exec"), ExitOutcome::Exited(7));
+    }
+
+    impl Fixture {
+        /// Reads terminal output into `seen` until it contains `needle`.
+        async fn read_until(
+            printed: &mut mpsc::Receiver<Vec<u8>>,
+            seen: &mut String,
+            needle: &str,
+        ) {
+            while !seen.contains(needle) {
+                let chunk = printed.recv().await.expect("terminal output");
+                seen.push_str(&String::from_utf8_lossy(&chunk));
+            }
+        }
     }
 }

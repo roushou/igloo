@@ -7,6 +7,8 @@ mod session;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ws_client;
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use self::session::Session;
 use crate::app::{
     AppError, CommandBus, InstallError, PlatformBuilder, RequestContext, TaskSpawner,
 };
-use crate::inbound::BlobUrls;
+use crate::inbound::{BlobUrls, TerminalHub};
 use crate::platform::{
     ConnectWorker, JobQueries, RegisterWorker, SandboxQueries, SealQueries, Snapshots, WorkerUsages,
 };
@@ -63,6 +65,7 @@ struct Shared {
     blob_urls: BlobUrls,
     secrets: JobSecrets,
     usages: WorkerUsages,
+    terminals: TerminalHub,
 }
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<v1::ConnectResponse, Status>> + Send>>;
@@ -104,6 +107,7 @@ impl Gateway {
                     Arc::clone(&ports.secrets),
                 ),
                 usages: WorkerUsages::new(),
+                terminals: TerminalHub::new(),
             }),
         })
     }
@@ -124,6 +128,17 @@ impl Gateway {
         // A gateway that has not been turned into a service is its state's only owner.
         if let Some(shared) = Arc::get_mut(&mut self.shared) {
             shared.usages = usages;
+        }
+        self
+    }
+
+    /// Routes the terminals of connected workers through `terminals`, the hub the REST API
+    /// opens terminals on.
+    #[must_use]
+    pub fn with_terminals(mut self, terminals: TerminalHub) -> Self {
+        // A gateway that has not been turned into a service is its state's only owner.
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.terminals = terminals;
         }
         self
     }

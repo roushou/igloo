@@ -3,6 +3,7 @@
 @import "@fontsource-variable/hanken-grotesk";
 @import "@fontsource-variable/bricolage-grotesque";
 @import "@fontsource-variable/jetbrains-mono";
+@import "@xterm/xterm/css/xterm.css";
 
 /* The theme follows the system: the dark values below replace the light ones. */
 

@@ -13,5 +13,8 @@ jiff.workspace = true
 serde.workspace = true
 utoipa.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

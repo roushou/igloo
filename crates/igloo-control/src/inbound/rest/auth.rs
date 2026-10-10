@@ -3,8 +3,9 @@ use std::sync::Arc;
 use axum::extract::FromRequestParts;
 use axum::extract::Query;
 use axum::http::Method;
-use axum::http::header::AUTHORIZATION;
+use axum::http::header::{AUTHORIZATION, SEC_WEBSOCKET_PROTOCOL};
 use axum::http::request::Parts;
+use igloo_api::terminal::TerminalRequest;
 use igloo_core::{Actor, Digest, SystemComponent, ValidationErrors};
 
 use super::{ApiError, ApiState};
@@ -56,6 +57,19 @@ impl FromRequestParts<ApiState> for Caller {
 
 impl Caller {
     fn extract(parts: &Parts, state: &ApiState) -> Result<Self, ApiError> {
+        let authorization = parts
+            .headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok());
+        Self::authenticated(parts, state, authorization)
+    }
+
+    /// The caller `authorization` (an `Authorization` header value) stands for.
+    fn authenticated(
+        parts: &Parts,
+        state: &ApiState,
+        authorization: Option<&str>,
+    ) -> Result<Self, ApiError> {
         let header = |name: &str| {
             parts
                 .headers
@@ -64,7 +78,7 @@ impl Caller {
         };
         let actor = state
             .auth
-            .authenticate(header(AUTHORIZATION.as_str()))
+            .authenticate(authorization)
             .ok_or_else(ApiError::unauthenticated)?;
         let correlation_id = header(Self::CORRELATION)
             .and_then(|value| value.parse::<CorrelationId>().ok())
@@ -131,5 +145,49 @@ impl BlobCaller {
             component: SystemComponent::Gateway,
         };
         Ok(Self(RequestContext::new(actor, state.ids.next())))
+    }
+}
+
+/// The caller of the terminal WebSocket: a bearer token in the `Authorization` header, or, for
+/// a browser that cannot set headers on a WebSocket, in an offered subprotocol
+/// `igloo.bearer.<token>`.
+pub(crate) struct TerminalCaller(
+    #[allow(dead_code, reason = "the caller is only authenticated")] pub(crate) RequestContext,
+);
+
+impl FromRequestParts<ApiState> for TerminalCaller {
+    type Rejection = ApiError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &ApiState,
+    ) -> impl Future<Output = Result<Self, ApiError>> + Send {
+        std::future::ready(Self::extract(parts, state))
+    }
+}
+
+impl TerminalCaller {
+    fn extract(parts: &Parts, state: &ApiState) -> Result<Self, ApiError> {
+        let header = parts
+            .headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let authorization = header.or_else(|| {
+            parts
+                .headers
+                .get_all(SEC_WEBSOCKET_PROTOCOL)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|offered| offered.split(','))
+                .find_map(|protocol| {
+                    protocol
+                        .trim()
+                        .strip_prefix(TerminalRequest::BEARER_PROTOCOL_PREFIX)
+                })
+                .map(|token| format!("Bearer {token}"))
+        });
+        Caller::authenticated(parts, state, authorization.as_deref())
+            .map(|Caller(context)| Self(context))
     }
 }

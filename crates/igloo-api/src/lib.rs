@@ -19,4 +19,5 @@ pub mod seal;
 pub mod snapshot;
 pub mod storage;
 pub mod task;
+pub mod terminal;
 pub mod worker;

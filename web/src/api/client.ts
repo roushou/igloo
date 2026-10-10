@@ -22,6 +22,16 @@ export type Comment = Schemas["CommentResource"];
 export type Problem = Schemas["Problem"];
 export type TaskPhase = Schemas["TaskPhase"];
 export type ChangePhase = Schemas["ChangePhase"];
+export type TerminalClientFrame = Schemas["TerminalClientFrame"];
+export type TerminalServerFrame = Schemas["TerminalServerFrame"];
+export type TerminalEndReason = Schemas["TerminalEndReason"];
+
+/** What a terminal runs and the screen it starts with. */
+export type TerminalOptions = { command?: string[]; cols: number; rows: number };
+
+/** The WebSocket subprotocol of a terminal, and the prefix of the one that carries the token. */
+export const TERMINAL_PROTOCOL = "igloo.terminal.v1";
+const TERMINAL_BEARER_PREFIX = "igloo.bearer.";
 
 /** How a token fared when checked against the server. */
 export type TokenCheck = "accepted" | "rejected" | "unreachable";
@@ -290,6 +300,29 @@ export class ApiClient {
       throw new Error(`event stream answered ${response.status}`);
     }
     return response.body;
+  }
+
+  /**
+   * Opens the terminal WebSocket of a running sandbox. The socket speaks `TERMINAL_PROTOCOL`; the
+   * bearer token travels as a second subprotocol because a browser cannot set headers on a
+   * WebSocket. Throws when the token is not valid in a subprotocol. A refusal arrives as the
+   * socket closing before it opened.
+   */
+  terminalSocket(sandbox: string, options: TerminalOptions): WebSocket {
+    const url = new URL(
+      `/v1/sandboxes/${encodeURIComponent(sandbox)}/terminal`,
+      window.location.origin,
+    );
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    for (const part of options.command ?? []) url.searchParams.append("command", part);
+    url.searchParams.set("cols", String(options.cols));
+    url.searchParams.set("rows", String(options.rows));
+    const protocols: string[] = [TERMINAL_PROTOCOL];
+    const token = this.tokens.get();
+    if (token) protocols.push(`${TERMINAL_BEARER_PREFIX}${token}`);
+    const socket = new WebSocket(url, protocols);
+    socket.binaryType = "arraybuffer";
+    return socket;
   }
 
   /** Checks `token` with `GET /v1/repos` without storing it or triggering the 401 handler. */

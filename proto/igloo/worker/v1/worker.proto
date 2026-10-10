@@ -20,6 +20,8 @@ message ConnectRequest {
     JobResult job_result = 6;
     SealFailed seal_failed = 7;
     Usage usage = 8;
+    TerminalOutput terminal_output = 9;
+    TerminalExit terminal_exit = 10;
   }
 }
 
@@ -32,6 +34,10 @@ message ConnectResponse {
     CancelJob cancel_job = 4;
     ResultAck result_ack = 5;
     SealRequest seal_request = 6;
+    OpenTerminal open_terminal = 7;
+    TerminalInput terminal_input = 8;
+    ResizeTerminal resize_terminal = 9;
+    CloseTerminal close_terminal = 10;
   }
 }
 
@@ -253,4 +259,71 @@ message SealRequest {
 message SealFailed {
   string seal_id = 1;
   string reason = 2;
+}
+
+// Interactive terminals. A terminal is a process in a sandbox with a pseudo-terminal, identified by
+// a terminal_id the server chooses and multiplexed over the same stream as jobs. It has no lease
+// and is never resent: it lives and ends with the stream, so a worker that loses its connection
+// kills its terminals. Input, output and exit are ordered per terminal.
+
+// The screen of a terminal in character cells. Both dimensions are from 1 to 65535.
+message TerminalSize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+// Start a process with a pseudo-terminal in a sandbox. The worker answers with TerminalOutput
+// while it runs and one TerminalExit when it ends, including when it cannot start. An id that is
+// already open is ignored.
+message OpenTerminal {
+  string terminal_id = 1;
+  string sandbox_id = 2;
+  // The program and its arguments; empty runs `sh`.
+  repeated string argv = 3;
+  // Environment layered over the sandbox's; TERM defaults to xterm-256color.
+  map<string, string> env = 4;
+  TerminalSize size = 5;
+}
+
+// Bytes typed into a terminal, written to the process as they are. Ignored for unknown terminals.
+message TerminalInput {
+  string terminal_id = 1;
+  bytes data = 2;
+}
+
+// The screen of a terminal changed size.
+message ResizeTerminal {
+  string terminal_id = 1;
+  TerminalSize size = 2;
+}
+
+// End a terminal: the process is killed and its TerminalExit is reported.
+message CloseTerminal {
+  string terminal_id = 1;
+}
+
+// Bytes the process wrote to its terminal, in order. A pseudo-terminal merges stdout and stderr.
+message TerminalOutput {
+  string terminal_id = 1;
+  bytes data = 2;
+}
+
+// How a terminal ended; sent once, after its last TerminalOutput.
+message TerminalExit {
+  string terminal_id = 1;
+  oneof outcome {
+    // The process's exit code (128 + signal when killed by a signal).
+    int32 exit_code = 2;
+    TerminalFailure failure = 3;
+  }
+}
+
+enum TerminalFailure {
+  TERMINAL_FAILURE_UNSPECIFIED = 0;
+  // The sandbox is not running on this worker.
+  TERMINAL_FAILURE_SANDBOX_UNAVAILABLE = 1;
+  // The process or its pseudo-terminal could not be started.
+  TERMINAL_FAILURE_EXECUTION_ERROR = 2;
+  // The server closed the terminal before the process ended.
+  TERMINAL_FAILURE_CLOSED = 3;
 }

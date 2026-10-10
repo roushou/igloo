@@ -830,3 +830,180 @@ async fn a_worker_reports_usage_when_it_connects_and_then_periodically() {
     .expect("a usage report with the sandbox and its layer within 10 s");
     assert_eq!(held.layer_cache_limit_bytes, first.layer_cache_limit_bytes);
 }
+
+const TERMINAL: &str = "term_00000000000000000000000001";
+
+impl Session {
+    async fn open_terminal(&self, sandbox: &str, argv: &[&str], cols: u32, rows: u32) {
+        self.send(Downlink::OpenTerminal(v1::OpenTerminal {
+            terminal_id: TERMINAL.to_owned(),
+            sandbox_id: sandbox.to_owned(),
+            argv: argv.iter().map(ToString::to_string).collect(),
+            env: HashMap::new(),
+            size: Some(v1::TerminalSize { cols, rows }),
+        }))
+        .await;
+    }
+
+    async fn type_into(&self, text: &str) {
+        self.send(Downlink::TerminalInput(v1::TerminalInput {
+            terminal_id: TERMINAL.to_owned(),
+            data: text.as_bytes().to_vec(),
+        }))
+        .await;
+    }
+
+    /// Collects terminal output until it contains `needle`; returns all of it so far.
+    async fn output_until(&mut self, seen: &mut String, needle: &str) {
+        while !seen.contains(needle) {
+            match self.next().await {
+                Uplink::TerminalOutput(output) => {
+                    assert_eq!(output.terminal_id, TERMINAL);
+                    seen.push_str(&String::from_utf8_lossy(&output.data));
+                }
+                Uplink::TerminalExit(exit) => panic!("the terminal ended early: {exit:?}\n{seen}"),
+                _ => {}
+            }
+        }
+    }
+
+    async fn terminal_exit(&mut self) -> v1::TerminalExit {
+        self.until(|message| match message {
+            Uplink::TerminalExit(exit) => Some(exit),
+            _ => None,
+        })
+        .await
+    }
+}
+
+/// A running sandbox on a started worker.
+async fn sandbox_ready(harness: &mut Harness, data: &Path) -> (CancellationToken, Session) {
+    let worker = harness.worker(data).await;
+    let mut session = harness.session().await;
+    let snapshot = harness.blobs.snapshot();
+    session
+        .assign(&sandbox_id(), &snapshot, v1::DesiredState::Running)
+        .await;
+    assert_eq!(session.phase().await, v1::SandboxPhase::Starting);
+    assert_eq!(session.phase().await, v1::SandboxPhase::Running);
+    (worker, session)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shell_echoes_input_honours_resizes_and_reports_its_exit_code() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let (_worker, mut session) = sandbox_ready(&mut harness, data.path()).await;
+
+    session.open_terminal(&sandbox_id(), &["sh"], 100, 30).await;
+    let mut seen = String::new();
+    session.type_into("echo hello-$((6*7))\n").await;
+    session.output_until(&mut seen, "hello-42").await;
+    assert!(
+        seen.contains("echo hello"),
+        "the terminal echoes typing: {seen}"
+    );
+
+    session.type_into("stty size; cat hello.txt\n").await;
+    session.output_until(&mut seen, "30 100\r\nhi").await;
+
+    session
+        .send(Downlink::ResizeTerminal(v1::ResizeTerminal {
+            terminal_id: TERMINAL.to_owned(),
+            size: Some(v1::TerminalSize {
+                cols: 132,
+                rows: 43,
+            }),
+        }))
+        .await;
+    session.type_into("stty size\n").await;
+    session.output_until(&mut seen, "43 132").await;
+
+    session.type_into("exit 7\n").await;
+    let exit = session.terminal_exit().await;
+    assert_eq!(exit.terminal_id, TERMINAL);
+    assert_eq!(exit.outcome, Some(v1::terminal_exit::Outcome::ExitCode(7)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn output_printed_before_the_exit_arrives_before_it() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let (_worker, mut session) = sandbox_ready(&mut harness, data.path()).await;
+
+    session
+        .open_terminal(
+            &sandbox_id(),
+            &["sh", "-c", "echo last-words; exit 3"],
+            80,
+            24,
+        )
+        .await;
+    let mut seen = String::new();
+    let exit = loop {
+        match session.next().await {
+            Uplink::TerminalOutput(output) => seen.push_str(&String::from_utf8_lossy(&output.data)),
+            Uplink::TerminalExit(exit) => break exit,
+            _ => {}
+        }
+    };
+    assert!(seen.contains("last-words"), "{seen:?}");
+    assert_eq!(exit.outcome, Some(v1::terminal_exit::Outcome::ExitCode(3)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closing_a_terminal_kills_its_process() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let (_worker, mut session) = sandbox_ready(&mut harness, data.path()).await;
+
+    session
+        .open_terminal(&sandbox_id(), &["sleep", "30"], 80, 24)
+        .await;
+    session
+        .send(Downlink::CloseTerminal(v1::CloseTerminal {
+            terminal_id: TERMINAL.to_owned(),
+        }))
+        .await;
+    let exit = session.terminal_exit().await;
+    assert_eq!(
+        exit.outcome,
+        Some(v1::terminal_exit::Outcome::Failure(
+            v1::TerminalFailure::Closed.into()
+        ))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_in_a_missing_sandbox_fails_at_once() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let _worker = harness.worker(data.path()).await;
+    let mut session = harness.session().await;
+
+    session.open_terminal(&sandbox_id(), &["sh"], 80, 24).await;
+    let exit = session.terminal_exit().await;
+    assert_eq!(
+        exit.outcome,
+        Some(v1::terminal_exit::Outcome::Failure(
+            v1::TerminalFailure::SandboxUnavailable.into()
+        ))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_runs_beside_a_job() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let (_worker, mut session) = sandbox_ready(&mut harness, data.path()).await;
+
+    session.open_terminal(&sandbox_id(), &["sh"], 80, 24).await;
+    session
+        .grant(JOB, &sandbox_id(), &["cat", "hello.txt"], 30)
+        .await;
+    let result = session.result().await;
+    assert_eq!(result.outcome, Some(v1::job_result::Outcome::ExitCode(0)));
+    let mut seen = String::new();
+    session.type_into("echo still-here\n").await;
+    session.output_until(&mut seen, "still-here").await;
+}

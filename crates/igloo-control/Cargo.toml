@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 blake3.workspace = true
 chacha20poly1305 = "0.11.0"
 eyre.workspace = true

@@ -21,6 +21,7 @@ use tonic::{Status, Streaming};
 use super::Shared;
 use super::secrets::JobSecrets;
 use crate::app::AppError;
+use crate::inbound::WorkerLink;
 use crate::platform::{
     DisconnectWorker, FailJob, FailSeal, FinishJob, LeaseJob, RecordSandboxStatus, RenewJobLease,
     StartJob,
@@ -39,6 +40,8 @@ pub(super) struct Session {
     seals: HashSet<SealId>,
     /// The secret values of granted jobs, masked out of their output.
     masks: HashMap<JobId, Vec<SecretValue>>,
+    /// Registers this connection with the terminal hub for as long as it lives.
+    terminals: WorkerLink,
 }
 
 impl Session {
@@ -47,6 +50,7 @@ impl Session {
         shared: Arc<Shared>,
         outbound: mpsc::Sender<Result<v1::ConnectResponse, Status>>,
     ) -> Self {
+        let terminals = shared.terminals.link(worker, outbound.clone());
         Self {
             worker,
             shared,
@@ -56,6 +60,7 @@ impl Session {
             manifests: HashMap::new(),
             seals: HashSet::new(),
             masks: HashMap::new(),
+            terminals,
         }
     }
 
@@ -269,6 +274,14 @@ impl Session {
             Some(Inbound::SealFailed(failed)) => self.fail_seal(&failed).await,
             Some(Inbound::Usage(usage)) => {
                 self.shared.record_usage(self.worker, Some(&usage));
+                Ok(())
+            }
+            Some(Inbound::TerminalOutput(output)) => {
+                self.terminals.output(output);
+                Ok(())
+            }
+            Some(Inbound::TerminalExit(exit)) => {
+                self.terminals.exit(&exit);
                 Ok(())
             }
             Some(Inbound::Hello(_)) | None => Ok(()),

@@ -24,6 +24,7 @@ use crate::reconciler::Sandboxes;
 use crate::runtime::{OciRuntime, ProcessRuntime, SandboxRuntime};
 use crate::seal::{SealError, Sealer};
 use crate::store::LocalStore;
+use crate::terminals::Terminals;
 use crate::usage::UsageMeter;
 
 /// A worker: keeps one connection to the gateway, converges its sandboxes to the assignment,
@@ -43,6 +44,7 @@ pub struct Worker {
     sealer: Sealer,
     seals: JoinSet<(String, Result<(), SealError>)>,
     sealing: HashSet<String>,
+    terminals: Terminals,
     uplink: mpsc::Sender<Uplink>,
     queued: mpsc::Receiver<Uplink>,
 }
@@ -129,6 +131,7 @@ impl Worker {
         )
         .map_err(std::io::Error::other)?;
         let (uplink, queued) = mpsc::channel(256);
+        let terminals = Terminals::new(Arc::clone(&runtime), uplink.clone());
         Ok(Self {
             config,
             capabilities,
@@ -144,6 +147,7 @@ impl Worker {
             sealer,
             seals: JoinSet::new(),
             sealing: HashSet::new(),
+            terminals,
             uplink,
             queued,
         })
@@ -212,7 +216,10 @@ impl Worker {
                 .send(Self::request(Uplink::JobResult(result)))
                 .await;
         }
-        self.serve(&mut responses, &requests, cancel).await
+        let ended = self.serve(&mut responses, &requests, cancel).await;
+        // Terminals live and end with the connection: nobody is left to read them.
+        self.terminals.close_all();
+        ended
     }
 
     async fn serve(
@@ -253,6 +260,13 @@ impl Worker {
                             let _ = requests.send(Self::request(Uplink::SealFailed(failed))).await;
                         }
                     }
+                }
+                Some(exit) = self.terminals.next_ended(), if self.terminals.has_tasks() => {
+                    // The terminal's output is already queued; it must reach the server first.
+                    while let Ok(uplink) = self.queued.try_recv() {
+                        let _ = requests.send(Self::request(uplink)).await;
+                    }
+                    let _ = requests.send(Self::request(Uplink::TerminalExit(exit))).await;
                 }
                 Some(joined) = self.jobs.join_next(), if !self.jobs.is_empty() => {
                     if let Ok((job_id, result)) = joined {
@@ -318,6 +332,16 @@ impl Worker {
             }
             Downlink::ResultAck(ack) => self.store.remove_result(&ack.job_id).await?,
             Downlink::SealRequest(request) => self.seal(request),
+            Downlink::OpenTerminal(open) => {
+                if let Some(exit) = self.terminals.open(open, &self.sandboxes) {
+                    let _ = requests
+                        .send(Self::request(Uplink::TerminalExit(exit)))
+                        .await;
+                }
+            }
+            Downlink::TerminalInput(input) => self.terminals.input(input),
+            Downlink::ResizeTerminal(resize) => self.terminals.resize(&resize),
+            Downlink::CloseTerminal(close) => self.terminals.close(&close.terminal_id),
             Downlink::Welcome(_) => {}
         }
         Ok(())

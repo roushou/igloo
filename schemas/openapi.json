@@ -1771,6 +1771,101 @@
         }
       }
     },
+    "/v1/sandboxes/{id}/terminal": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Opens an interactive terminal in a running sandbox: upgrades to a WebSocket speaking the\nsubprotocol `igloo.terminal.v1`.",
+        "description": "Binary frames carry the terminal's bytes in both directions. Text frames carry JSON control\nmessages: the client sends `TerminalClientFrame` (resize); the server sends one\n`TerminalServerFrame` (exit) and closes the socket when the process ends. Closing the socket\nkills the process. Authenticated like the rest of the API; a browser, which cannot set headers\non a WebSocket, offers the subprotocol `igloo.bearer.<token>` as well.",
+        "operationId": "openTerminal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "command",
+            "in": "query",
+            "description": "The program and its arguments, one value each; the default shell when omitted",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "cols",
+            "in": "query",
+            "description": "Initial columns, 1 to 65535; 80 when omitted",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rows",
+            "in": "query",
+            "description": "Initial rows, 1 to 65535; 24 when omitted",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching protocols to the WebSocket subprotocol `igloo.terminal.v1`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/seals/{id}": {
       "get": {
         "tags": [
@@ -3846,6 +3941,89 @@
             "description": "Its turns, oldest first."
           }
         }
+      },
+      "TerminalClientFrame": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The client's screen changed size; 1 to 65535 columns and rows.",
+            "required": [
+              "cols",
+              "rows",
+              "type"
+            ],
+            "properties": {
+              "cols": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Columns.",
+                "minimum": 0
+              },
+              "rows": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Rows.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resize"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A text frame the client sends."
+      },
+      "TerminalEndReason": {
+        "type": "string",
+        "description": "Why a terminal ended without an exit code.",
+        "enum": [
+          "sandbox_unavailable",
+          "execution_error",
+          "closed",
+          "lost"
+        ]
+      },
+      "TerminalServerFrame": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The terminal ended; the last frame before the server closes the socket. Exactly one of\n`code` and `failure` is set.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "code": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "The process's exit code (128 + signal when killed by a signal)."
+              },
+              "failure": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TerminalEndReason",
+                    "description": "Why the terminal ended without an exit code."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A text frame the server sends."
       },
       "TranscriptEntry": {
         "type": "object",

@@ -26,6 +26,7 @@ pub mod repo;
 pub mod sandbox;
 pub mod seal;
 pub mod snapshot;
+pub mod terminal;
 pub mod worker;
 
 #[cfg(any(test, feature = "testing"))]

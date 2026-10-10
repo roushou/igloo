@@ -507,6 +507,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sandboxes/{id}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Opens an interactive terminal in a running sandbox: upgrades to a WebSocket speaking the
+         *     subprotocol `igloo.terminal.v1`.
+         * @description Binary frames carry the terminal's bytes in both directions. Text frames carry JSON control
+         *     messages: the client sends `TerminalClientFrame` (resize); the server sends one
+         *     `TerminalServerFrame` (exit) and closes the socket when the process ends. Closing the socket
+         *     kills the process. Authenticated like the rest of the API; a browser, which cannot set headers
+         *     on a WebSocket, offers the subprotocol `igloo.bearer.<token>` as well.
+         */
+        get: operations["openTerminal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/seals/{id}": {
         parameters: {
             query?: never;
@@ -1393,6 +1418,37 @@ export interface components {
             tool?: string | null;
             /** @description Its turns, oldest first. */
             turns: components["schemas"]["TurnResource"][];
+        };
+        /** @description A text frame the client sends. */
+        TerminalClientFrame: {
+            /**
+             * Format: int32
+             * @description Columns.
+             */
+            cols: number;
+            /**
+             * Format: int32
+             * @description Rows.
+             */
+            rows: number;
+            /** @enum {string} */
+            type: "resize";
+        };
+        /**
+         * @description Why a terminal ended without an exit code.
+         * @enum {string}
+         */
+        TerminalEndReason: "sandbox_unavailable" | "execution_error" | "closed" | "lost";
+        /** @description A text frame the server sends. */
+        TerminalServerFrame: {
+            /**
+             * Format: int32
+             * @description The process's exit code (128 + signal when killed by a signal).
+             */
+            code?: number | null;
+            failure?: components["schemas"]["TerminalEndReason"] | null;
+            /** @enum {string} */
+            type: "exit";
         };
         /** @description An entry of a task's transcript. */
         TranscriptEntry: {
@@ -2814,6 +2870,65 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    openTerminal: {
+        parameters: {
+            query?: {
+                /** @description The program and its arguments, one value each; the default shell when omitted */
+                command?: string[];
+                /** @description Initial columns, 1 to 65535; 80 when omitted */
+                cols?: number;
+                /** @description Initial rows, 1 to 65535; 24 when omitted */
+                rows?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching protocols to the WebSocket subprotocol `igloo.terminal.v1` */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

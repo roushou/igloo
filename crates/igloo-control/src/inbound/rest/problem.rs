@@ -6,7 +6,7 @@ use igloo_api::problem::Problem;
 use igloo_core::ErrorCode;
 
 use crate::app::AppError;
-use crate::inbound::BlobUrlRejected;
+use crate::inbound::{BlobUrlRejected, TerminalError};
 
 /// An error response: an RFC 9457 problem with its status.
 #[derive(Debug)]
@@ -92,5 +92,14 @@ impl IntoResponse for ApiError {
             HeaderValue::from_static("application/problem+json"),
         );
         response
+    }
+}
+
+impl From<TerminalError> for ApiError {
+    fn from(error: TerminalError) -> Self {
+        Self(Box::new(
+            Problem::new(409, error.code(), "The terminal is unavailable")
+                .with_detail(error.to_string()),
+        ))
     }
 }

@@ -31,11 +31,11 @@ use crate::app::{
 };
 use crate::ci::{CiModule, Outcome, Run};
 use crate::config::Config;
-use crate::inbound::BlobUrls;
 use crate::inbound::WebConsole;
 use crate::inbound::gateway::Gateway;
 use crate::inbound::mcp::Mcp;
 use crate::inbound::rest::{DevToken, RestApi};
+use crate::inbound::{BlobUrls, TerminalHub};
 use crate::platform::{
     BuildModule, ChangeModule, JobModule, LayerCollector, RepoModule, SandboxModule, SealModule,
     SnapshotModule, WorkerModule, WorkerUsages,
@@ -150,6 +150,7 @@ impl Server {
             events.follow(cancel).await.map_err(AppError::from)
         });
         let usages = WorkerUsages::new();
+        let terminals = TerminalHub::new();
         let gateway = Gateway::new(
             &builder,
             builder.bus(),
@@ -158,7 +159,8 @@ impl Server {
             blob_urls.clone(),
         )?
         .with_lease_ttl(config.lease_ttl)
-        .with_usages(usages.clone());
+        .with_usages(usages.clone())
+        .with_terminals(terminals.clone());
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(Self::DEV_USER)),
         };
@@ -170,6 +172,7 @@ impl Server {
             blob_urls,
         )?
         .with_usages(usages)
+        .with_terminals(terminals)
         .with_collector(collector.clone());
         let api = Mcp::router(&rest).merge(rest.router());
         let http = match &config.web_dir {

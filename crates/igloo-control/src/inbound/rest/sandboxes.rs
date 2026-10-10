@@ -149,12 +149,12 @@ pub(super) async fn exec(
 }
 
 /// A malformed id names no sandbox.
-fn parse_id(id: &str) -> Result<SandboxId, ApiError> {
+pub(super) fn parse_id(id: &str) -> Result<SandboxId, ApiError> {
     id.parse()
         .map_err(|_| ApiError::not_found("sandbox.not_found"))
 }
 
-async fn load(state: &ApiState, id: SandboxId) -> Result<Sandbox, ApiError> {
+pub(super) async fn load(state: &ApiState, id: SandboxId) -> Result<Sandbox, ApiError> {
     state
         .sandboxes
         .get(id)

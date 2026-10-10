@@ -26,7 +26,9 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::Gateway;
+use super::ws_client::{Frame, WsClient};
 use crate::app::{AppError, CommandBus, ControllerSettings, TaskSupervisor};
+use crate::inbound::TerminalHub;
 use crate::inbound::rest::{DevToken, RestApi};
 use crate::platform::{
     CancelJob, CreateSandbox, JobModule, RepoModule, SandboxModule, SealModule, SnapshotModule,
@@ -45,6 +47,8 @@ struct Harness {
     bus: CommandBus,
     rest: Router,
     address: SocketAddr,
+    /// Where the REST API listens, for `WebSocket`s.
+    http: SocketAddr,
     supervisor: TaskSupervisor,
 }
 
@@ -72,6 +76,7 @@ impl Harness {
         let supervisor = TaskSupervisor::new();
         let urls = blob_urls(Arc::clone(&builder.ports().clock));
         let usages = WorkerUsages::new();
+        let terminals = TerminalHub::new();
         let gateway = Gateway::new(
             &builder,
             builder.bus(),
@@ -81,7 +86,8 @@ impl Harness {
         )
         .expect("gateway")
         .with_lease_ttl(lease_ttl)
-        .with_usages(usages.clone());
+        .with_usages(usages.clone())
+        .with_terminals(terminals.clone());
         let actor = Actor::Human {
             user: Id::from_uuid(Uuid::from_u128(7)),
         };
@@ -93,12 +99,24 @@ impl Harness {
         )
         .expect("rest api")
         .with_usages(usages)
+        .with_terminals(terminals)
         .router();
         let bus = builder.build().start(&supervisor);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let address = listener.local_addr().expect("address");
+        let http_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind http");
+        let http = http_listener.local_addr().expect("http address");
+        let served = rest.clone();
+        supervisor.spawn("rest", move |cancel| async move {
+            axum::serve(http_listener, served)
+                .with_graceful_shutdown(cancel.cancelled_owned())
+                .await
+                .map_err(AppError::infrastructure)
+        });
         supervisor.spawn("gateway", move |cancel| async move {
             Server::builder()
                 .add_service(gateway.into_service())
@@ -111,6 +129,7 @@ impl Harness {
             bus,
             rest,
             address,
+            http,
             supervisor,
         }
     }
@@ -810,5 +829,282 @@ async fn a_worker_that_reports_no_usage_is_accepted_and_listed_without_it() {
     let workers: serde_json::Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(workers.as_array().map(Vec::len), Some(1));
     assert!(workers[0].get("usage").is_none());
+    harness.stop().await;
+}
+
+const BEARER: (&str, &str) = ("Authorization", "Bearer api-token");
+
+impl Harness {
+    /// A connected worker holding a running sandbox.
+    async fn running_sandbox(&self) -> (WorkerClient, SandboxId) {
+        let mut worker = self
+            .connect(JOIN_TOKEN, hello("", 1))
+            .await
+            .expect("connect");
+        let Outbound::Welcome(_) = worker.next().await else {
+            panic!("the first message must be a welcome");
+        };
+        let sandbox = self.create_sandbox().await;
+        worker
+            .until(|message| match message {
+                Outbound::Assignment(assignment) if !assignment.sandboxes.is_empty() => Some(()),
+                _ => None,
+            })
+            .await;
+        worker
+            .send(Inbound::SandboxStatus(v1::SandboxStatus::new(
+                &sandbox.to_string(),
+                SandboxPhase::Running,
+                igloo_core::Generation::INITIAL,
+            )))
+            .await;
+        let sandboxes = self.stores.sandboxes.clone();
+        wait_until(async || {
+            let stored = sandboxes.load(sandbox).await.expect("load");
+            stored.is_some_and(|stored| stored.entity().status().phase() == SandboxPhase::Running)
+        })
+        .await;
+        (worker, sandbox)
+    }
+
+    async fn terminal(
+        &self,
+        sandbox: SandboxId,
+        query: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<WsClient, super::ws_client::Refused> {
+        WsClient::connect(
+            self.http,
+            &format!("/v1/sandboxes/{sandbox}/terminal{query}"),
+            headers,
+        )
+        .await
+    }
+}
+
+impl WorkerClient {
+    async fn open_terminal(&mut self) -> v1::OpenTerminal {
+        self.until(|message| match message {
+            Outbound::OpenTerminal(open) => Some(open),
+            _ => None,
+        })
+        .await
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_carries_input_output_resizes_and_the_exit_over_a_websocket() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+
+    let mut socket = harness
+        .terminal(
+            sandbox,
+            "?command=bash&command=-l&cols=100&rows=30",
+            &[BEARER, ("Sec-WebSocket-Protocol", "igloo.terminal.v1")],
+        )
+        .await
+        .expect("upgrade");
+    assert_eq!(socket.protocol.as_deref(), Some("igloo.terminal.v1"));
+    let open = worker.open_terminal().await;
+    assert_eq!(open.sandbox_id, sandbox.to_string());
+    assert_eq!(open.argv, ["bash", "-l"]);
+    assert_eq!(
+        open.size,
+        Some(v1::TerminalSize {
+            cols: 100,
+            rows: 30
+        })
+    );
+
+    socket.send_binary(b"ls\n").await;
+    let Outbound::TerminalInput(input) = worker.next().await else {
+        panic!("the typing reaches the worker");
+    };
+    assert_eq!(input.terminal_id, open.terminal_id);
+    assert_eq!(input.data, b"ls\n");
+
+    socket
+        .send_text(r#"{"type":"resize","cols":132,"rows":43}"#)
+        .await;
+    let Outbound::ResizeTerminal(resize) = worker.next().await else {
+        panic!("the resize reaches the worker");
+    };
+    assert_eq!(
+        resize.size,
+        Some(v1::TerminalSize {
+            cols: 132,
+            rows: 43
+        })
+    );
+
+    worker
+        .send(Inbound::TerminalOutput(v1::TerminalOutput {
+            terminal_id: open.terminal_id.clone(),
+            data: b"file.txt\r\n".to_vec(),
+        }))
+        .await;
+    assert_eq!(socket.recv().await, Frame::Binary(b"file.txt\r\n".to_vec()));
+
+    worker
+        .send(Inbound::TerminalExit(v1::TerminalExit {
+            terminal_id: open.terminal_id,
+            outcome: Some(v1::terminal_exit::Outcome::ExitCode(3)),
+        }))
+        .await;
+    assert_eq!(
+        socket.recv().await,
+        Frame::Text(r#"{"type":"exit","code":3}"#.to_owned())
+    );
+    assert_eq!(socket.recv().await, Frame::Close(1000));
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closing_the_socket_closes_the_terminal() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+    let mut socket = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect("upgrade");
+    let open = worker.open_terminal().await;
+    assert!(open.argv.is_empty(), "the default shell");
+    assert_eq!(open.size, Some(v1::TerminalSize { cols: 80, rows: 24 }));
+
+    socket.close().await;
+    let close = worker
+        .until(|message| match message {
+            Outbound::CloseTerminal(close) => Some(close),
+            _ => None,
+        })
+        .await;
+    assert_eq!(close.terminal_id, open.terminal_id);
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn losing_the_worker_ends_the_socket_with_a_lost_exit() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+    let mut socket = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect("upgrade");
+    worker.open_terminal().await;
+
+    drop(worker);
+    assert_eq!(
+        socket.recv().await,
+        Frame::Text(r#"{"type":"exit","failure":"lost"}"#.to_owned())
+    );
+    assert_eq!(socket.recv().await, Frame::Close(1000));
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_malformed_control_frame_ends_the_terminal() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+    let mut socket = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect("upgrade");
+    let open = worker.open_terminal().await;
+
+    socket
+        .send_text(r#"{"type":"resize","cols":0,"rows":24}"#)
+        .await;
+    assert_eq!(socket.recv().await, Frame::Close(1007));
+    let close = worker
+        .until(|message| match message {
+            Outbound::CloseTerminal(close) => Some(close),
+            _ => None,
+        })
+        .await;
+    assert_eq!(close.terminal_id, open.terminal_id);
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_is_refused_without_the_token() {
+    let harness = Harness::start().await;
+    let (_worker, sandbox) = harness.running_sandbox().await;
+
+    for headers in [
+        vec![],
+        vec![("Authorization", "Bearer wrong")],
+        vec![("Authorization", "Basic api-token")],
+        vec![(
+            "Sec-WebSocket-Protocol",
+            "igloo.terminal.v1, igloo.bearer.wrong",
+        )],
+        vec![("Sec-WebSocket-Protocol", "igloo.terminal.v1")],
+    ] {
+        let refused = harness
+            .terminal(sandbox, "", &headers)
+            .await
+            .expect_err("refused");
+        assert_eq!(refused.status, 401, "{headers:?}");
+        assert!(
+            refused.body.contains("auth.unauthenticated"),
+            "{}",
+            refused.body
+        );
+    }
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_browser_authenticates_with_a_subprotocol() {
+    let harness = Harness::start().await;
+    let (mut worker, sandbox) = harness.running_sandbox().await;
+
+    let socket = harness
+        .terminal(
+            sandbox,
+            "",
+            &[(
+                "Sec-WebSocket-Protocol",
+                "igloo.terminal.v1, igloo.bearer.api-token",
+            )],
+        )
+        .await
+        .expect("upgrade");
+    assert_eq!(
+        socket.protocol.as_deref(),
+        Some("igloo.terminal.v1"),
+        "the token is never echoed back"
+    );
+    worker.open_terminal().await;
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_terminal_needs_a_running_sandbox_and_a_valid_request() {
+    let harness = Harness::start().await;
+    let pending = harness.create_sandbox().await;
+    let refused = harness
+        .terminal(pending, "", &[BEARER])
+        .await
+        .expect_err("not running");
+    assert_eq!(
+        (refused.status, refused.body.contains("sandbox.not_running")),
+        (409, true)
+    );
+
+    let unknown = Id::<igloo_core::sandbox::Sandbox>::from_uuid(Uuid::from_u128(99));
+    let refused = harness
+        .terminal(unknown, "", &[BEARER])
+        .await
+        .expect_err("unknown");
+    assert_eq!(refused.status, 404);
+
+    let (_worker, running) = harness.running_sandbox().await;
+    let refused = harness
+        .terminal(running, "?cols=0", &[BEARER])
+        .await
+        .expect_err("invalid size");
+    assert_eq!(refused.status, 422);
     harness.stop().await;
 }

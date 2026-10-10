@@ -38,7 +38,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", features = ["fs"] }
+rustix = { version = "1.1.5", features = ["fs", "process", "pty", "termios"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rtnetlink = "0.23.0"

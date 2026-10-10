@@ -14,6 +14,7 @@ mod sandboxes;
 mod seals;
 mod storage;
 pub(super) mod tasks;
+mod terminals;
 mod timings;
 mod upload;
 mod workers;
@@ -43,7 +44,7 @@ use self::timings::Timings;
 use crate::agents::{Task, TaskQueries, Transcripts};
 use crate::app::{CommandBus, InstallError, PlatformBuilder};
 use crate::ci::{Merger, Run, RunQueries};
-use crate::inbound::BlobUrls;
+use crate::inbound::{BlobUrls, TerminalHub};
 use crate::platform::{
     BuildQueries, ChangeHeads, ChangeQueries, ImageImporter, LayerCollector, RepoQueries,
     RepoSnapshots, SandboxQueries, Snapshots, WorkerUsages,
@@ -89,6 +90,7 @@ pub(crate) struct ApiState {
     blob_urls: BlobUrls,
     idempotency: Arc<dyn IdempotencyStore>,
     clock: Arc<dyn Clock>,
+    terminals: TerminalHub,
     max_blob_bytes: u64,
 }
 
@@ -100,7 +102,12 @@ pub struct RestApi {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Igloo", version = "v1", description = "The Igloo control plane API."),
-    components(schemas(igloo_api::list::ListOrder)),
+    components(schemas(
+        igloo_api::list::ListOrder,
+        igloo_api::terminal::TerminalClientFrame,
+        igloo_api::terminal::TerminalServerFrame,
+        igloo_api::terminal::TerminalEndReason
+    )),
     modifiers(&BearerAuth),
     security(("bearer" = []))
 )]
@@ -175,6 +182,7 @@ impl RestApi {
                 blob_urls,
                 idempotency: Arc::clone(&ports.idempotency),
                 clock: Arc::clone(&ports.clock),
+                terminals: TerminalHub::new(),
                 max_blob_bytes: Self::DEFAULT_MAX_BLOB_BYTES,
             },
         })
@@ -184,6 +192,13 @@ impl RestApi {
     #[must_use]
     pub fn with_usages(mut self, usages: WorkerUsages) -> Self {
         self.state.usages = usages;
+        self
+    }
+
+    /// Opens terminals on `terminals`, the hub a gateway given the same handle routes.
+    #[must_use]
+    pub fn with_terminals(mut self, terminals: TerminalHub) -> Self {
+        self.state.terminals = terminals;
         self
     }
 
@@ -227,6 +242,7 @@ impl RestApi {
             .routes(routes!(storage::get))
             .routes(routes!(sandboxes::stop))
             .routes(routes!(sandboxes::exec))
+            .routes(routes!(terminals::open))
             .routes(routes!(jobs::get))
             .routes(routes!(jobs::logs))
             .routes(routes!(blobs::put, blobs::get))

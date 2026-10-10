@@ -369,6 +369,11 @@ composition.rs  Server: the only place naming concrete adapters
 - **Reconciler.** Converges local sandboxes to the `Assignment` the server sends. An
   assignment is derived, never stored: the sandboxes scheduled on that worker, with their specs
   and generations. The gateway pushes it again whenever one of them changes.
+- **Terminals.** `SandboxRuntime::exec_terminal` runs a process on a pseudo-terminal in a sandbox,
+  with input, resize, output and exit streamed over the gateway session beside jobs. `OciRuntime`
+  runs the container in the foreground on the pseudo-terminal with `terminal: true`. The server's
+  `TerminalHub` routes bytes between a worker session and the caller that opened the terminal; a
+  terminal ends with its process, its caller, or its worker connection.
 - Results are built from the held `Lease`, so every report carries its fencing token. Results
   wait in a local outbox until acknowledged.
 
@@ -396,8 +401,14 @@ composition.rs  Server: the only place naming concrete adapters
   Routes and their OpenAPI description are registered together in `igloo-control`; the document
   is committed as `schemas/openapi.json` and a test fails on drift.
 - **SSE**: live events and logs from the event log, resumable with `Last-Event-ID`.
+- **WebSocket**: `GET /v1/sandboxes/{id}/terminal` upgrades to an interactive terminal in a running
+  sandbox (subprotocol `igloo.terminal.v1`): binary frames carry the terminal's bytes, text frames
+  carry JSON resize and exit messages. Authenticated with the bearer header, or, for a browser, an
+  `igloo.bearer.<token>` subprotocol. It ends with the process or the socket.
 - **Worker protocol** `igloo.worker.v1`: the server sends the full desired `Assignment`, lease
   grants, cancels and drain; the worker sends hello, heartbeats, usage (disk, layer cache, sandboxes held; every 30 s), status, logs and results.
+  Terminals ride the same stream: the server sends open, input, resize and close; the worker sends
+  output and exit. A terminal has no lease and is never resent; it ends with the stream.
   The handshake negotiates the version; workers one version behind are accepted.
 - **MCP**: streamable HTTP at `/mcp` beside REST, with the same token and resources; tools are
   thin adapters over the command bus, named like their commands (`task.create`). They neither

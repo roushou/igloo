@@ -4,6 +4,7 @@ mod child;
 mod netns;
 mod oci;
 mod process;
+mod pty;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -14,6 +15,7 @@ use async_trait::async_trait;
 use igloo_core::Generation;
 use igloo_core::process::OutputStream;
 use igloo_core::sandbox::{NetworkPolicy, ResourceLimits, SandboxId};
+use igloo_core::terminal::TerminalSize;
 use igloo_core::worker::RuntimeKind;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -71,6 +73,47 @@ pub enum ExitOutcome {
     Cancelled,
 }
 
+/// A process to run in a sandbox with a pseudo-terminal. It has no timeout: it runs until it
+/// exits or is cancelled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalProcess {
+    /// The program and its arguments; never empty.
+    pub argv: Vec<String>,
+    /// Environment layered over the sandbox's.
+    pub env: BTreeMap<String, String>,
+    /// The screen it starts with.
+    pub size: TerminalSize,
+}
+
+/// What a person does at a terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalInput {
+    /// Bytes typed, delivered to the process as they are.
+    Data(Vec<u8>),
+    /// The screen changed size.
+    Resize(TerminalSize),
+}
+
+/// The two directions of a running terminal.
+#[derive(Debug)]
+pub struct TerminalIo {
+    /// Input for the process. The process is killed when every sender is dropped.
+    pub input: mpsc::Receiver<TerminalInput>,
+    /// What the process printed, in order.
+    pub output: mpsc::Sender<Vec<u8>>,
+}
+
+impl From<std::process::ExitStatus> for ExitOutcome {
+    fn from(status: std::process::ExitStatus) -> Self {
+        use std::os::unix::process::ExitStatusExt;
+        Self::Exited(
+            status
+                .code()
+                .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+        )
+    }
+}
+
 /// Why a runtime operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -98,6 +141,17 @@ pub trait SandboxRuntime: Send + Sync {
         sandbox: &LocalSandbox,
         process: Process,
         output: mpsc::Sender<OutputChunk>,
+        cancel: CancellationToken,
+    ) -> Result<ExitOutcome, RuntimeError>;
+
+    /// Runs `process` in `sandbox` on a pseudo-terminal, connected to `io`, until it exits or
+    /// `cancel` fires or `io.input` closes. Output the process printed is delivered before this
+    /// returns; the outcome is never [`ExitOutcome::TimedOut`].
+    async fn exec_terminal(
+        &self,
+        sandbox: &LocalSandbox,
+        process: TerminalProcess,
+        io: TerminalIo,
         cancel: CancellationToken,
     ) -> Result<ExitOutcome, RuntimeError>;
 
