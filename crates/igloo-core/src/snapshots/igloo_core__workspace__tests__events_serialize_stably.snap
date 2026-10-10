@@ -1,0 +1,53 @@
+---
+source: crates/igloo-core/src/workspace.rs
+expression: events
+---
+[
+  {
+    "type": "created",
+    "id": "wsp_00000000000000000000000001",
+    "spec": {
+      "owner": "usr_00000000000000000000000001",
+      "repo": "repo_00000000000000000000000002",
+      "branch": "main",
+      "desired": "running"
+    },
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "sandbox_created",
+    "sandbox": "sbx_0000000000000000000000000a",
+    "secrets": []
+  },
+  {
+    "type": "sandbox_running",
+    "sandbox": "sbx_0000000000000000000000000a",
+    "at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "type": "stop_requested",
+    "generation": 2
+  },
+  {
+    "type": "sealing",
+    "seal": "seal_0000000000000000000000000y"
+  },
+  {
+    "type": "sealed",
+    "snapshot": "blake3:0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  {
+    "type": "sandbox_stop_requested"
+  },
+  {
+    "type": "sandbox_ended",
+    "sandbox": "sbx_0000000000000000000000000a"
+  },
+  {
+    "type": "seal_failed"
+  },
+  {
+    "type": "activity_recorded",
+    "at": "2026-01-01T00:00:00Z"
+  }
+]

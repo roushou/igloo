@@ -18,6 +18,7 @@ mod terminals;
 mod timings;
 mod upload;
 mod workers;
+pub(super) mod workspaces;
 
 #[cfg(test)]
 mod tests;
@@ -32,6 +33,7 @@ use igloo_core::repo::Repo;
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::Seal;
 use igloo_core::worker::Worker;
+use igloo_core::workspace::Workspace;
 use utoipa::openapi::OpenApi as Document;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -53,6 +55,7 @@ use crate::ports::{
     BlobStore, Clock, EntityStore, EventLog, Forge, IdGenerator, IdempotencyStore, LogStore,
     SecretStore,
 };
+use crate::workspaces::{WorkspaceQueries, WorkspaceSecrets};
 
 pub use auth::DevToken;
 pub use problem::ApiError;
@@ -73,6 +76,8 @@ pub(crate) struct ApiState {
     builds: BuildQueries,
     tasks: TaskQueries,
     transcripts: Transcripts,
+    workspaces: WorkspaceQueries,
+    workspace_secrets: WorkspaceSecrets,
     merger: Merger,
     repo_snapshots: RepoSnapshots,
     forge: Arc<dyn Forge>,
@@ -152,6 +157,11 @@ impl RestApi {
                 runs: RunQueries::new(platform.store::<Run>()?),
                 builds: BuildQueries::new(platform.store::<Build>()?),
                 tasks: TaskQueries::new(platform.store::<Task>()?),
+                workspaces: WorkspaceQueries::new(platform.store::<Workspace>()?),
+                workspace_secrets: WorkspaceSecrets::new(
+                    WorkspaceQueries::new(platform.store::<Workspace>()?),
+                    Arc::clone(&ports.secrets),
+                ),
                 transcripts: Transcripts::new(Arc::clone(&ports.logs)),
                 merger: Merger::new(
                     RepoQueries::new(platform.store::<Repo>()?, Arc::clone(&ports.secrets)),
@@ -273,6 +283,11 @@ impl RestApi {
             .routes(routes!(tasks::get))
             .routes(routes!(tasks::cancel))
             .routes(routes!(tasks::transcript))
+            .routes(routes!(workspaces::create))
+            .routes(routes!(workspaces::list))
+            .routes(routes!(workspaces::get, workspaces::delete))
+            .routes(routes!(workspaces::start))
+            .routes(routes!(workspaces::stop))
             .routes(routes!(events::stream))
     }
 }

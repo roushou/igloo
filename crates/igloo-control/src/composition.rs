@@ -10,6 +10,7 @@ use igloo_core::repo::Repo;
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::Seal;
 use igloo_core::worker::Worker as WorkerEntity;
+use igloo_core::workspace::Workspace;
 use igloo_core::{Actor, Id, ValidationErrors};
 use igloo_worker::{Worker, WorkerConfig, WorkerError};
 use tokio::net::TcpListener;
@@ -41,6 +42,7 @@ use crate::platform::{
     SnapshotModule, WorkerModule, WorkerUsages,
 };
 use crate::ports::{IdGenerator, RegistryError, StorageError};
+use crate::workspaces::WorkspaceModule;
 
 /// A running server: the platform, the REST API, the worker gateway and, in development, an
 /// embedded worker. The only place that names concrete adapters.
@@ -109,7 +111,8 @@ impl Server {
         builder.provide_store::<Build>(Arc::new(PgEntityStore::new(database, Arc::clone(&ids))));
         builder.provide_store::<Run>(Arc::new(PgEntityStore::new(database, Arc::clone(&ids))));
         builder.provide_store::<Outcome>(Arc::new(PgEntityStore::new(database, Arc::clone(&ids))));
-        builder.provide_store::<Task>(Arc::new(PgEntityStore::new(database, ids)));
+        builder.provide_store::<Task>(Arc::new(PgEntityStore::new(database, Arc::clone(&ids))));
+        builder.provide_store::<Workspace>(Arc::new(PgEntityStore::new(database, ids)));
         let settings = ControllerSettings::default();
         builder.install(SandboxModule { settings })?;
         builder.install(WorkerModule { settings })?;
@@ -121,6 +124,7 @@ impl Server {
         builder.install(BuildModule { settings })?;
         builder.install(CiModule { settings })?;
         builder.install(AgentsModule { settings })?;
+        builder.install(WorkspaceModule { settings })?;
 
         Ok(builder)
     }

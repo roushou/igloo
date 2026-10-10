@@ -6,13 +6,16 @@ use igloo_api::terminal::{TerminalClientFrame, TerminalRequest, TerminalServerFr
 use igloo_core::Resource as _;
 use igloo_core::sandbox::SandboxPhase;
 use igloo_core::terminal::TerminalSize;
+use igloo_core::workspace::WorkspaceId;
+use tokio::time::{Interval, MissedTickBehavior};
 
 use super::auth::TerminalCaller;
 use super::sandboxes::{load, parse_id};
 use super::{ApiError, ApiState};
-use crate::app::AppError;
+use crate::app::{AppError, CommandBus, RequestContext};
 use crate::inbound::{TerminalEvent, TerminalLaunch, TerminalSession};
 use crate::ports::IdGeneratorExt as _;
+use crate::workspaces::TouchWorkspace;
 
 /// Opens an interactive terminal in a running sandbox: upgrades to a WebSocket speaking the
 /// subprotocol `igloo.terminal.v1`.
@@ -43,7 +46,7 @@ use crate::ports::IdGeneratorExt as _;
 )]
 pub(super) async fn open(
     State(state): State<ApiState>,
-    _: TerminalCaller,
+    TerminalCaller(context): TerminalCaller,
     Path(id): Path<String>,
     Query(params): Query<Vec<(String, String)>>,
     upgrade: WebSocketUpgrade,
@@ -60,23 +63,78 @@ pub(super) async fn open(
     let launch = TerminalLaunch {
         sandbox: igloo_core::Entity::id(&sandbox),
         argv: request.command,
-        env: std::collections::BTreeMap::new(),
+        env: state
+            .workspace_secrets
+            .terminal_env(igloo_core::Entity::id(&sandbox))
+            .await?,
         size: request.size,
     };
     let session = state
         .terminals
         .open(state.ids.next(), worker, launch)
         .await?;
+    let workspace = state
+        .workspace_secrets
+        .workspace_of(igloo_core::Entity::id(&sandbox))
+        .await?;
+    let presence = workspace.map(|workspace| Presence::new(state.bus.clone(), workspace, context));
     Ok(upgrade
         .protocols([TerminalRequest::PROTOCOL])
         .max_message_size(TerminalBridge::MAX_FRAME)
-        .on_upgrade(move |socket| TerminalBridge { socket, session }.run()))
+        .on_upgrade(move |socket| {
+            TerminalBridge {
+                socket,
+                session,
+                presence,
+            }
+            .run()
+        }))
 }
 
 /// Carries one terminal over one WebSocket until either ends.
 struct TerminalBridge {
     socket: WebSocket,
     session: TerminalSession,
+    presence: Option<Presence>,
+}
+
+/// Tells a workspace its terminal is attached, so it is not stopped for idleness: on attaching,
+/// every [`Presence::EVERY`] while attached, and on detaching.
+struct Presence {
+    bus: CommandBus,
+    workspace: WorkspaceId,
+    context: RequestContext,
+    ticker: Interval,
+}
+
+impl Presence {
+    /// Well inside the workspace idle timeout, so one missed touch never stops a used workspace.
+    const EVERY: std::time::Duration = std::time::Duration::from_mins(10);
+
+    fn new(bus: CommandBus, workspace: WorkspaceId, context: RequestContext) -> Self {
+        let mut ticker = tokio::time::interval(Self::EVERY);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        Self {
+            bus,
+            workspace,
+            context,
+            ticker,
+        }
+    }
+
+    /// Completes when the next touch is due; the first is due at once.
+    async fn due(&mut self) {
+        self.ticker.tick().await;
+    }
+
+    async fn touch(&self) {
+        let command = TouchWorkspace {
+            workspace: self.workspace,
+        };
+        if let Err(error) = self.bus.dispatch(command, self.context.clone()).await {
+            tracing::warn!(workspace = %self.workspace, %error, "recording terminal activity failed");
+        }
+    }
 }
 
 impl TerminalBridge {
@@ -88,8 +146,25 @@ impl TerminalBridge {
     const INVALID: u16 = 1007;
 
     async fn run(mut self) {
+        self.serve().await;
+        if let Some(presence) = &self.presence {
+            presence.touch().await;
+        }
+    }
+
+    async fn serve(&mut self) {
         let closing = loop {
             tokio::select! {
+                () = async {
+                    match self.presence.as_mut() {
+                        Some(presence) => presence.due().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(presence) = &self.presence {
+                        presence.touch().await;
+                    }
+                }
                 event = self.session.next() => match event {
                     Some(TerminalEvent::Output(data)) => {
                         if self.socket.send(Message::Binary(data.into())).await.is_err() {

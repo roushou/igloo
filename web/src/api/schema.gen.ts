@@ -401,6 +401,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/repos/{id}/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Opens a workspace on a branch of a repository for the caller. It starts at once: its sandbox
+         *     is forked from the repository's warm snapshot at the branch head.
+         */
+        post: operations["createWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{id}": {
         parameters: {
             query?: never;
@@ -711,6 +731,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists the caller's workspaces, oldest first. */
+        get: operations["listWorkspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets a workspace. */
+        get: operations["getWorkspace"];
+        put?: never;
+        post?: never;
+        /** Deletes a workspace: its sandbox is stopped without sealing and its changes are dropped. */
+        delete: operations["deleteWorkspace"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Starts a workspace: a sandbox resumes from what its last stop sealed. Starting a running
+         *     workspace changes nothing; a workspace that is stopping starts again once it has stopped.
+         */
+        post: operations["startWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stops a workspace: its changes are sealed, then its sandbox stops. Stopping a stopped
+         *     workspace changes nothing.
+         */
+        post: operations["stopWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -897,6 +992,11 @@ export interface components {
             goal: string;
             /** @description A tool of the repository's `.igloo/agents.toml`; its default tool when absent. */
             tool?: string | null;
+        };
+        /** @description Opens a workspace on a branch of a repository. */
+        CreateWorkspaceRequest: {
+            /** @description The branch to work on; it must exist. The repository's default branch when absent. */
+            branch?: string | null;
         };
         /**
          * @description Whether the sandbox should run.
@@ -1654,6 +1754,38 @@ export interface components {
              * @description Sandboxes it holds, starting or ready.
              */
             sandboxes: number;
+        };
+        /**
+         * @description Where a workspace is.
+         * @enum {string}
+         */
+        WorkspacePhase: "starting" | "running" | "stopping" | "stopped";
+        /** @description A workspace. */
+        WorkspaceResource: {
+            /** @description The branch it was opened on. */
+            branch: string;
+            /**
+             * Format: date-time
+             * @description When it was created.
+             */
+            created_at: string;
+            /** @description Its id (`wsp_...`). */
+            id: string;
+            /**
+             * Format: date-time
+             * @description When a person last used it.
+             */
+            last_activity: string;
+            /** @description The person it belongs to. */
+            owner: string;
+            /** @description Where it is. */
+            phase: components["schemas"]["WorkspacePhase"];
+            /** @description The repository. */
+            repo: string;
+            /** @description Its sandbox, while it has one. Its terminal is the sandbox's. */
+            sandbox?: string | null;
+            /** @description The snapshot its last stop sealed, which holds everything the workspace has. */
+            snapshot?: string | null;
         };
     };
     responses: never;
@@ -2630,6 +2762,47 @@ export interface operations {
             };
         };
     };
+    createWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWorkspaceRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getRun: {
         parameters: {
             query?: never;
@@ -3262,6 +3435,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkerResource"][];
+                };
+            };
+        };
+    };
+    listWorkspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceResource"][];
+                };
+            };
+        };
+    };
+    getWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    startWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    stopWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceResource"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Problem"];
                 };
             };
         };

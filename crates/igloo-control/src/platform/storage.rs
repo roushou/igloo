@@ -7,6 +7,7 @@ use igloo_core::repo::{Repo, RepoId};
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::{Seal, SealPhase};
 use igloo_core::snapshot::{SnapshotId, SnapshotLayer};
+use igloo_core::workspace::Workspace;
 use igloo_core::{Actor, Digest, Entity, Resource, SystemComponent, Timestamp};
 use jiff::SignedDuration;
 use tokio_util::sync::CancellationToken;
@@ -62,7 +63,8 @@ pub struct SnapshotSize {
 /// A sweep deletes a blob only when no live root reaches it and it was stored more than
 /// [`LayerCollector::GRACE`] ago. Live roots are the snapshots recorded on repositories (warm,
 /// agent and imported), the snapshots of sandboxes that have not ended, and those of builds
-/// and seals in progress; a root keeps its manifest and every layer it names. Snapshot
+/// and seals in progress, and the snapshot each workspace's last stop sealed until the workspace
+/// is deleted; a root keeps its manifest and every layer it names. Snapshot
 /// manifests are flat, so the layers of a base are kept through the snapshots built over it.
 /// Before each sweep, a repository forgets the warm and agent snapshots it recorded and none used
 /// for [`LayerCollector::RETENTION`], keeping its most recently used one and those a live sandbox
@@ -76,6 +78,7 @@ pub struct LayerCollector {
     sandboxes: Arc<dyn EntityStore<Sandbox>>,
     builds: Arc<dyn EntityStore<Build>>,
     seals: Arc<dyn EntityStore<Seal>>,
+    workspaces: Arc<dyn EntityStore<Workspace>>,
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     bus: CommandBus,
@@ -103,6 +106,7 @@ impl LayerCollector {
             sandboxes: platform.store::<Sandbox>()?,
             builds: platform.store::<Build>()?,
             seals: platform.store::<Seal>()?,
+            workspaces: platform.store::<Workspace>()?,
             clock: Arc::clone(&ports.clock),
             ids: Arc::clone(&ports.ids),
             bus,
@@ -322,6 +326,14 @@ impl LayerCollector {
                 .map(|build| build.spec().sandbox.snapshot()),
         );
         roots.extend(
+            self.workspaces
+                .all()
+                .await?
+                .iter()
+                .filter(|workspace| !workspace.is_deleted())
+                .filter_map(|workspace| workspace.status().snapshot()),
+        );
+        roots.extend(
             self.seals
                 .all()
                 .await?
@@ -355,7 +367,13 @@ mod tests {
         CreateSandbox, RecordWarmSnapshot, RecordWarmUse, RegisterRepo, RegisterSnapshot,
         RepoModule, SandboxModule, SnapshotModule, StopSandbox, StoreBlob,
     };
+    use crate::ports::Versioned;
     use crate::testing::{MemoryPlatform, context};
+    use igloo_core::Id;
+    use igloo_core::seal::Seal as SealEntity;
+    use igloo_core::workspace::{Workspace, WorkspaceId};
+    use std::collections::BTreeSet;
+    use uuid::Uuid;
 
     struct Fixture {
         bus: CommandBus,
@@ -364,6 +382,8 @@ mod tests {
         repo: RepoId,
         repos: Arc<dyn EntityStore<Repo>>,
         supervisor: TaskSupervisor,
+        workspaces: Arc<dyn EntityStore<Workspace>>,
+        ids: Arc<dyn IdGenerator>,
     }
 
     fn digest_of(bytes: &[u8]) -> Digest {
@@ -383,6 +403,7 @@ mod tests {
                 .expect("sandbox module");
             builder.install(SnapshotModule).expect("snapshot module");
             builder.install(RepoModule).expect("repo module");
+            let ids = Arc::clone(&builder.ports().ids);
             let repos = builder.store::<Repo>().expect("repo store");
             let collector = LayerCollector::new(&builder, builder.bus()).expect("collector");
             let supervisor = TaskSupervisor::new();
@@ -412,6 +433,8 @@ mod tests {
                 repo,
                 repos,
                 supervisor,
+                workspaces: stores.workspaces,
+                ids,
             }
         }
 
@@ -507,6 +530,52 @@ mod tests {
                 )
                 .await
                 .expect("create sandbox")
+        }
+
+        async fn delete_workspace(&self, id: WorkspaceId) {
+            let mut stored = self
+                .workspaces
+                .load(id)
+                .await
+                .expect("load")
+                .expect("workspace");
+            stored.entity_mut().delete(crate::testing::START);
+            let meta = context().commit_meta(crate::testing::START);
+            self.workspaces
+                .commit(&mut stored, &meta)
+                .await
+                .expect("commit");
+        }
+
+        /// A workspace whose last stop sealed `snapshot`.
+        async fn stopped_workspace(&self, snapshot: SnapshotId) -> WorkspaceId {
+            let id = self.ids.next::<Workspace>();
+            let mut workspace = Workspace::new(
+                id,
+                Id::from_uuid(Uuid::from_u128(7)),
+                self.repo,
+                "main".parse().expect("branch"),
+                crate::testing::START,
+            );
+            let sandbox = self.ids.next::<Sandbox>();
+            workspace
+                .sandbox_created(sandbox, BTreeSet::new())
+                .expect("created");
+            workspace.sandbox_running(sandbox, crate::testing::START);
+            workspace.stop();
+            workspace
+                .sealing(self.ids.next::<SealEntity>())
+                .expect("sealing");
+            let seal = workspace.seal().expect("seal");
+            workspace.seal_ended(seal, Ok(snapshot));
+            workspace.sandbox_stopping().expect("stopping");
+            workspace.sandbox_ended(sandbox);
+            let meta = context().commit_meta(crate::testing::START);
+            self.workspaces
+                .commit(&mut Versioned::new(workspace), &meta)
+                .await
+                .expect("commit");
+            id
         }
 
         async fn has(&self, digest: Digest) -> bool {
@@ -693,6 +762,31 @@ mod tests {
             fixture.repo().await.warm(&Digest::from_blake3([1; 32])),
             None
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_workspaces_sealed_snapshot_is_kept_until_the_workspace_is_deleted() {
+        let fixture = Fixture::new().await;
+        let (sealed, layers) = fixture.snapshot(&[b"checkout", b"sealed changes"]).await;
+        let workspace = fixture.stopped_workspace(sealed).await;
+
+        tokio::time::advance(Fixture::after_grace() + LayerCollector::RETENTION).await;
+        let sweep = fixture.collector.sweep().await.expect("sweep");
+        assert_eq!(
+            sweep.reclaimed_blobs, 0,
+            "a stopped workspace resumes from it"
+        );
+        assert!(fixture.has(*sealed.as_digest()).await);
+        for layer in &layers {
+            assert!(fixture.has(*layer).await);
+        }
+
+        fixture.delete_workspace(workspace).await;
+        fixture.collector.sweep().await.expect("sweep");
+        assert!(!fixture.has(*sealed.as_digest()).await);
+        for layer in &layers {
+            assert!(!fixture.has(*layer).await);
+        }
     }
 
     #[tokio::test(start_paused = true)]

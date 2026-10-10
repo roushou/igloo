@@ -1416,6 +1416,64 @@
         }
       }
     },
+    "/v1/repos/{id}/workspaces": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Opens a workspace on a branch of a repository for the caller. It starts at once: its sandbox\nis forked from the repository's warm snapshot at the branch head.",
+        "operationId": "createWorkspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/runs/{id}": {
       "get": {
         "tags": [
@@ -2320,6 +2378,175 @@
           }
         }
       }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Lists the caller's workspaces, oldest first.",
+        "operationId": "listWorkspaces",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspaceResource"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Gets a workspace.",
+        "operationId": "getWorkspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Deletes a workspace: its sandbox is stopped without sealing and its changes are dropped.",
+        "operationId": "deleteWorkspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}/start": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Starts a workspace: a sandbox resumes from what its last stop sealed. Starting a running\nworkspace changes nothing; a workspace that is stopping starts again once it has stopped.",
+        "operationId": "startWorkspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}/stop": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Stops a workspace: its changes are sealed, then its sandbox stops. Stopping a stopped\nworkspace changes nothing.",
+        "operationId": "stopWorkspace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResource"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2773,6 +3000,19 @@
               "null"
             ],
             "description": "A tool of the repository's `.igloo/agents.toml`; its default tool when absent."
+          }
+        }
+      },
+      "CreateWorkspaceRequest": {
+        "type": "object",
+        "description": "Opens a workspace on a branch of a repository.",
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch to work on; it must exist. The repository's default branch when absent."
           }
         }
       },
@@ -4490,6 +4730,75 @@
             "format": "int32",
             "description": "Sandboxes it holds, starting or ready.",
             "minimum": 0
+          }
+        }
+      },
+      "WorkspacePhase": {
+        "type": "string",
+        "description": "Where a workspace is.",
+        "enum": [
+          "starting",
+          "running",
+          "stopping",
+          "stopped"
+        ]
+      },
+      "WorkspaceResource": {
+        "type": "object",
+        "description": "A workspace.",
+        "required": [
+          "id",
+          "owner",
+          "repo",
+          "branch",
+          "phase",
+          "last_activity",
+          "created_at"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The branch it was opened on."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was created."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (`wsp_...`)."
+          },
+          "last_activity": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When a person last used it."
+          },
+          "owner": {
+            "type": "string",
+            "description": "The person it belongs to."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/WorkspacePhase",
+            "description": "Where it is."
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository."
+          },
+          "sandbox": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its sandbox, while it has one. Its terminal is the sandbox's."
+          },
+          "snapshot": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The snapshot its last stop sealed, which holds everything the workspace has."
           }
         }
       }

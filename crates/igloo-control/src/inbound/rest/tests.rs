@@ -21,6 +21,7 @@ use crate::platform::{
 };
 use crate::ports::{CommitMeta, CorrelationId, EntityStore, Versioned};
 use crate::testing::{FIXTURE_IMAGE, MemoryPlatform, MemoryStores, START, blob_urls};
+use crate::workspaces::WorkspaceModule;
 
 const TOKEN: &str = "dev-token";
 
@@ -67,6 +68,11 @@ fn api_parts() -> (
     builder.install(SealModule).expect("seal module");
     builder.install(RepoModule).expect("repo module");
     builder.install(ChangeModule).expect("change module");
+    builder
+        .install(WorkspaceModule {
+            settings: ControllerSettings::default(),
+        })
+        .expect("workspace module");
     let actor = Actor::Human {
         user: Id::from_uuid(Uuid::from_u128(7)),
     };
@@ -1615,4 +1621,127 @@ async fn storage_reports_the_blobs_stored_and_no_sweep_before_the_first() {
     assert_eq!(body["bytes"], json!(LAYER.len() + manifest.len()));
     assert!(body.get("last_sweep").is_none());
     assert_eq!(body["snapshots"], json!([]));
+}
+
+#[tokio::test]
+async fn workspaces_are_opened_listed_stopped_started_and_deleted() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    origin.switch("feature");
+    origin.commit("change", &[("src/lib.rs", Some("v1"))]);
+    let repo = register_origin(&router, &origin).await;
+
+    let (status, workspace, _) = Call::new(Method::POST, format!("/v1/repos/{repo}/workspaces"))
+        .json(&json!({ "branch": "feature" }))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{workspace}");
+    assert_eq!(workspace["repo"], repo);
+    assert_eq!(workspace["branch"], "feature");
+    assert_eq!(workspace["phase"], "starting");
+    assert!(
+        workspace["owner"]
+            .as_str()
+            .expect("owner")
+            .starts_with("usr_")
+    );
+    assert!(workspace.get("sandbox").is_none(), "no sandbox yet");
+    let id = workspace["id"].as_str().expect("id");
+
+    let (_, default, _) = Call::new(Method::POST, format!("/v1/repos/{repo}/workspaces"))
+        .json(&json!({}))
+        .send(&router)
+        .await;
+    assert_eq!(default["branch"], "main", "the default branch when unset");
+
+    let (status, listed, _) = Call::new(Method::GET, "/v1/workspaces").send(&router).await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<_> = listed
+        .as_array()
+        .expect("list")
+        .iter()
+        .map(|workspace| workspace["id"].clone())
+        .collect();
+    assert_eq!(ids, [json!(id), default["id"].clone()], "oldest first");
+    let (_, got, _) = Call::new(Method::GET, format!("/v1/workspaces/{id}"))
+        .send(&router)
+        .await;
+    assert_eq!(got, workspace);
+
+    let (status, stopped, _) = Call::new(Method::POST, format!("/v1/workspaces/{id}/stop"))
+        .send(&router)
+        .await;
+    assert_eq!(
+        (status, &stopped["phase"]),
+        (StatusCode::OK, &json!("stopped"))
+    );
+    let (_, again, _) = Call::new(Method::POST, format!("/v1/workspaces/{id}/stop"))
+        .send(&router)
+        .await;
+    assert_eq!(again["phase"], "stopped", "stopping twice changes nothing");
+    let (_, started, _) = Call::new(Method::POST, format!("/v1/workspaces/{id}/start"))
+        .send(&router)
+        .await;
+    assert_eq!(started["phase"], "starting");
+
+    let (status, _, _) = Call::new(Method::DELETE, format!("/v1/workspaces/{id}"))
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    for call in [
+        Call::new(Method::GET, format!("/v1/workspaces/{id}")),
+        Call::new(Method::POST, format!("/v1/workspaces/{id}/start")),
+        Call::new(Method::DELETE, format!("/v1/workspaces/{id}")),
+    ] {
+        let (status, body, _) = call.send(&router).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["code"], "workspace.not_found");
+    }
+    let (_, listed, _) = Call::new(Method::GET, "/v1/workspaces").send(&router).await;
+    assert_eq!(listed.as_array().expect("list").len(), 1);
+}
+
+#[tokio::test]
+async fn a_workspace_needs_an_existing_repository_and_branch() {
+    let router = api();
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit("base", &[("README.md", Some("igloo"))]);
+    let repo = register_origin(&router, &origin).await;
+    let missing = Id::<Repo>::from_uuid(Uuid::from_u128(99));
+
+    for (uri, body, status, code) in [
+        (
+            format!("/v1/repos/{missing}/workspaces"),
+            json!({}),
+            StatusCode::NOT_FOUND,
+            "repo.not_found",
+        ),
+        (
+            format!("/v1/repos/{repo}/workspaces"),
+            json!({ "branch": "nope" }),
+            StatusCode::NOT_FOUND,
+            "branch.not_found",
+        ),
+        (
+            format!("/v1/repos/{repo}/workspaces"),
+            json!({ "branch": "not a branch" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.invalid",
+        ),
+    ] {
+        let (got, problem, _) = Call::new(Method::POST, uri).json(&body).send(&router).await;
+        assert_eq!(
+            (got, problem["code"].as_str()),
+            (status, Some(code)),
+            "{problem}"
+        );
+    }
+    let (status, _, _) = Call::new(Method::GET, "/v1/workspaces")
+        .anonymous()
+        .send(&router)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

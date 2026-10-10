@@ -12,6 +12,7 @@ use igloo_core::job::{JobFailure, JobId, JobPhase, JobSpec, JobTimeout};
 use igloo_core::process::{Argv, EnvVars, OutputStream};
 use igloo_core::sandbox::{SandboxId, SandboxPhase, SandboxSpec};
 use igloo_core::worker::{Arch, Capabilities, Connection, Os, ProtocolVersion, RuntimeKind};
+use igloo_core::workspace::WorkspacePhase;
 use igloo_core::{Actor, Digest, Id};
 use igloo_worker_protocol::v1;
 use igloo_worker_protocol::v1::connect_request::Message as Inbound;
@@ -38,6 +39,7 @@ use crate::platform::{RegisterRepo, SetSecret};
 use crate::testing::{
     MemoryPlatform, MemoryStores, blob_urls, context, register_snapshot, wait_until,
 };
+use crate::workspaces::{CreateWorkspace, WorkspaceModule};
 
 const JOIN_TOKEN: &str = "join-token";
 const API_TOKEN: &str = "api-token";
@@ -72,6 +74,9 @@ impl Harness {
         builder.install(JobModule { settings }).expect("job module");
         builder.install(SnapshotModule).expect("snapshot module");
         builder.install(SealModule).expect("seal module");
+        builder
+            .install(WorkspaceModule { settings })
+            .expect("workspace module");
         builder.install(RepoModule).expect("repo module");
         let supervisor = TaskSupervisor::new();
         let urls = blob_urls(Arc::clone(&builder.ports().clock));
@@ -1106,5 +1111,93 @@ async fn a_terminal_needs_a_running_sandbox_and_a_valid_request() {
         .await
         .expect_err("invalid size");
     assert_eq!(refused.status, 422);
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workspaces_terminal_gets_its_secrets_and_marks_the_workspace_used() {
+    let harness = Harness::start().await;
+    let dir = tempfile::tempdir().expect("dir");
+    let origin = igloo_git::testing::Fixture::new(dir.path());
+    origin.commit(
+        "pipeline",
+        &[(
+            ".igloo/pipeline.toml",
+            Some("secrets = [\"TOKEN\"]\n\n[[checks]]\nname = \"ok\"\nrun = \"true\"\n"),
+        )],
+    );
+    let register = RegisterRepo {
+        location: origin.location(),
+        default_branch: "main".parse().expect("branch"),
+        token: None,
+    };
+    let repo = harness
+        .bus
+        .dispatch(register, context())
+        .await
+        .expect("repo");
+    let set = SetSecret {
+        repo,
+        name: "TOKEN".parse().expect("name"),
+        value: "hunter2".to_owned().try_into().expect("value"),
+    };
+    harness.bus.dispatch(set, context()).await.expect("secret");
+
+    let mut worker = harness
+        .connect(JOIN_TOKEN, hello("", 1))
+        .await
+        .expect("connect");
+    let Outbound::Welcome(_) = worker.next().await else {
+        panic!("the first message must be a welcome");
+    };
+    let create = CreateWorkspace {
+        repo,
+        branch: "main".parse().expect("branch"),
+    };
+    let workspace = harness
+        .bus
+        .dispatch(create, context())
+        .await
+        .expect("workspace");
+    let assignment = worker
+        .until(|message| match message {
+            Outbound::Assignment(assignment) if !assignment.sandboxes.is_empty() => {
+                Some(assignment)
+            }
+            _ => None,
+        })
+        .await;
+    let sandbox: SandboxId = assignment.sandboxes[0]
+        .sandbox_id
+        .parse()
+        .expect("sandbox id");
+    worker
+        .send(Inbound::SandboxStatus(v1::SandboxStatus::new(
+            &sandbox.to_string(),
+            SandboxPhase::Running,
+            igloo_core::Generation::INITIAL,
+        )))
+        .await;
+    let workspaces = harness.stores.workspaces.clone();
+    let activity = async || {
+        workspaces
+            .load(workspace)
+            .await
+            .expect("load")
+            .expect("workspace")
+            .entity()
+            .status()
+            .clone()
+    };
+    wait_until(async || activity().await.phase() == WorkspacePhase::Running).await;
+    let before = activity().await.last_activity();
+
+    let _socket = harness
+        .terminal(sandbox, "", &[BEARER])
+        .await
+        .expect("upgrade");
+    let open = worker.open_terminal().await;
+    assert_eq!(open.env.get("TOKEN").map(String::as_str), Some("hunter2"));
+    wait_until(async || activity().await.last_activity() > before).await;
     harness.stop().await;
 }

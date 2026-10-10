@@ -151,9 +151,7 @@ impl BlobCaller {
 /// The caller of the terminal WebSocket: a bearer token in the `Authorization` header, or, for
 /// a browser that cannot set headers on a WebSocket, in an offered subprotocol
 /// `igloo.bearer.<token>`.
-pub(crate) struct TerminalCaller(
-    #[allow(dead_code, reason = "the caller is only authenticated")] pub(crate) RequestContext,
-);
+pub(crate) struct TerminalCaller(pub(crate) RequestContext);
 
 impl FromRequestParts<ApiState> for TerminalCaller {
     type Rejection = ApiError;

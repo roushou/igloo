@@ -13,6 +13,7 @@ mod config;
 pub mod inbound;
 pub mod platform;
 pub mod ports;
+pub mod workspaces;
 
 #[cfg(test)]
 mod testing;

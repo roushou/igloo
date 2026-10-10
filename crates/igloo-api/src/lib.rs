@@ -21,3 +21,4 @@ pub mod storage;
 pub mod task;
 pub mod terminal;
 pub mod worker;
+pub mod workspace;

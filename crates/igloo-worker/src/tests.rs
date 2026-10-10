@@ -1007,3 +1007,109 @@ async fn a_terminal_runs_beside_a_job() {
     session.type_into("echo still-here\n").await;
     session.output_until(&mut seen, "still-here").await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_written_before_a_stop_is_there_after_a_start_from_its_seal() {
+    let mut harness = Harness::start().await;
+    let data = tempfile::tempdir().expect("data dir");
+    let _worker = harness.worker(data.path()).await;
+    let mut session = harness.session().await;
+    let base = harness.blobs.snapshot();
+    let first = sandbox_id();
+    session
+        .assign(&first, &base, v1::DesiredState::Running)
+        .await;
+    session
+        .grant(JOB, &first, &["sh", "-c", "echo kept > notes.txt"], 30)
+        .await;
+    assert_eq!(
+        session.result().await.outcome,
+        Some(v1::job_result::Outcome::ExitCode(0))
+    );
+
+    let seal = "seal_00000000000000000000000003";
+    session
+        .send(Downlink::SealRequest(v1::SealRequest {
+            seal_id: seal.to_owned(),
+            sandbox_id: first.clone(),
+            upload_url: format!("http://igloo.test/v1/seals/{seal}/layer?expires=1&signature=s"),
+        }))
+        .await;
+    let uploaded = async {
+        loop {
+            if let Some(upload) = harness
+                .blobs
+                .uploads
+                .lock()
+                .expect("uploads")
+                .first()
+                .cloned()
+            {
+                return upload;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    let (url, bytes) = tokio::time::timeout(Duration::from_secs(10), uploaded)
+        .await
+        .expect("an upload within 10 s");
+    let full = url
+        .query_pairs()
+        .any(|(key, value)| key == "layer" && value == "full");
+
+    let mut stopping = v1::AssignedSandbox {
+        sandbox_id: first.clone(),
+        snapshot: Digest::from_blake3([7; 32]).to_string(),
+        layers: base.clone(),
+        generation: 2,
+        millicpus: 1000,
+        memory_mib: 2048,
+        ..v1::AssignedSandbox::default()
+    };
+    stopping.set_desired(v1::DesiredState::Stopped);
+    session
+        .send(Downlink::Assignment(v1::Assignment {
+            sandboxes: vec![stopping],
+        }))
+        .await;
+    session
+        .until(|message| match message {
+            Uplink::SandboxStatus(status) if status.phase() == v1::SandboxPhase::Stopped => {
+                Some(())
+            }
+            _ => None,
+        })
+        .await;
+
+    // What the server registers for the stop: the base layers plus the sealed one, or the sealed
+    // one alone when it holds the whole root.
+    let digest = harness.blobs.put(bytes);
+    let sealed = SnapshotLayer::new(digest, MediaType::Tar);
+    let sealed = v1::SnapshotLayer::new(&sealed, format!("http://blobs.test/{digest}"));
+    let resumed: Vec<v1::SnapshotLayer> = if full {
+        vec![sealed]
+    } else {
+        base.iter().cloned().chain([sealed]).collect()
+    };
+    let second = Id::<Sandbox>::from_uuid(Uuid::from_u128(6)).to_string();
+    session
+        .assign(&second, &resumed, v1::DesiredState::Running)
+        .await;
+    session
+        .grant(
+            "job_0000000000000000000000000c",
+            &second,
+            &[
+                "sh",
+                "-c",
+                "test \"$(cat notes.txt)\" = kept && grep -q hi hello.txt",
+            ],
+            30,
+        )
+        .await;
+    assert_eq!(
+        session.result().await.outcome,
+        Some(v1::job_result::Outcome::ExitCode(0)),
+        "the new sandbox has the file written before the stop, and the base files"
+    );
+}

@@ -9,6 +9,7 @@ use igloo_api::sandbox::{CreateSandboxRequest, SandboxList, SandboxResource};
 use igloo_api::seal::{SealPhase, SealResource};
 use igloo_api::snapshot::{CreateSnapshotRequest, ImportImageRequest, SnapshotResource};
 use igloo_api::task::{CreateTaskRequest, TaskResource, TranscriptResource};
+use igloo_api::workspace::{CreateWorkspaceRequest, WorkspaceResource};
 use reqwest::{Method, RequestBuilder, Url};
 use serde::de::DeserializeOwned;
 
@@ -307,6 +308,46 @@ impl Client {
     /// Cancels a task and stops its sandbox.
     pub async fn cancel_task(&self, id: &str) -> Result<TaskResource, Error> {
         self.send(self.request(Method::POST, &format!("v1/tasks/{id}/cancel"))?)
+            .await
+    }
+
+    /// Opens a workspace on a branch of a repository; it starts at once.
+    pub async fn create_workspace(
+        &self,
+        repo: &str,
+        request: &CreateWorkspaceRequest,
+    ) -> Result<WorkspaceResource, Error> {
+        let path = format!("v1/repos/{repo}/workspaces");
+        let request = Self::json(self.request(Method::POST, &path)?, request)?;
+        self.send(request).await
+    }
+
+    /// The caller's workspaces, oldest first.
+    pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceResource>, Error> {
+        self.send(self.request(Method::GET, "v1/workspaces")?).await
+    }
+
+    /// Gets a workspace.
+    pub async fn get_workspace(&self, id: &str) -> Result<WorkspaceResource, Error> {
+        self.send(self.request(Method::GET, &format!("v1/workspaces/{id}"))?)
+            .await
+    }
+
+    /// Starts a workspace, resuming from what its last stop sealed.
+    pub async fn start_workspace(&self, id: &str) -> Result<WorkspaceResource, Error> {
+        self.send(self.request(Method::POST, &format!("v1/workspaces/{id}/start"))?)
+            .await
+    }
+
+    /// Stops a workspace: its changes are sealed, then its sandbox stops.
+    pub async fn stop_workspace(&self, id: &str) -> Result<WorkspaceResource, Error> {
+        self.send(self.request(Method::POST, &format!("v1/workspaces/{id}/stop"))?)
+            .await
+    }
+
+    /// Deletes a workspace, dropping its unsealed changes.
+    pub async fn delete_workspace(&self, id: &str) -> Result<(), Error> {
+        self.send_empty(self.request(Method::DELETE, &format!("v1/workspaces/{id}"))?)
             .await
     }
 

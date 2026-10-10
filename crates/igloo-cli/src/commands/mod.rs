@@ -15,6 +15,7 @@ mod sandbox;
 mod secret;
 mod snapshot;
 mod task;
+mod workspace;
 
 /// The selected CLI command; global connection settings are supplied by the caller.
 #[derive(Subcommand)]
@@ -26,6 +27,8 @@ pub(crate) enum Command {
     Change(change::Change),
     /// Manages tasks: agents working toward a goal on a repository.
     Task(task::Task),
+    /// Manages workspaces: long-lived sandboxes where a person works on a branch.
+    Workspace(workspace::Workspace),
     /// Manages repositories.
     Repo(repo::Repo),
     /// Manages repository secrets, exposed to jobs that name them.
@@ -45,6 +48,7 @@ impl Command {
             Self::Run(cmd) => cmd.execute(client).await,
             Self::Change(cmd) => cmd.execute(client).await,
             Self::Task(cmd) => cmd.execute(client).await,
+            Self::Workspace(cmd) => cmd.execute(client).await,
             Self::Repo(cmd) => cmd.execute(client).await,
             Self::Secret(cmd) => cmd.execute(client).await,
             Self::Snapshot(cmd) => cmd.execute(client).await,

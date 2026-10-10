@@ -11,6 +11,7 @@ use igloo_core::repo::Repo;
 use igloo_core::sandbox::Sandbox;
 use igloo_core::seal::Seal;
 use igloo_core::worker::Worker;
+use igloo_core::workspace::Workspace;
 use igloo_core::{Actor, Id, Timestamp};
 use tokio::time::Instant;
 use uuid::Uuid;
@@ -54,6 +55,7 @@ pub(crate) struct MemoryStores {
     pub(crate) workers: Arc<dyn EntityStore<Worker>>,
     pub(crate) jobs: Arc<dyn EntityStore<Job>>,
     pub(crate) seals: Arc<dyn EntityStore<Seal>>,
+    pub(crate) workspaces: Arc<dyn EntityStore<Workspace>>,
     pub(crate) secrets: Arc<dyn SecretStore>,
     /// Holds the forge's mirrors for as long as the platform lives.
     pub(crate) forge_dir: Arc<tempfile::TempDir>,
@@ -112,6 +114,8 @@ impl MemoryPlatform {
         let outcomes: Arc<dyn EntityStore<crate::ci::Outcome>> =
             Arc::new(MemoryEntityStore::new(log.clone(), ids.clone()));
         let tasks: Arc<dyn EntityStore<crate::agents::Task>> =
+            Arc::new(MemoryEntityStore::new(log.clone(), ids.clone()));
+        let workspaces: Arc<dyn EntityStore<Workspace>> =
             Arc::new(MemoryEntityStore::new(log.clone(), ids));
         let mut builder = PlatformBuilder::new(ports, timeout);
         builder.provide_store(Arc::clone(&sandboxes));
@@ -124,6 +128,7 @@ impl MemoryPlatform {
         builder.provide_store(runs);
         builder.provide_store(outcomes);
         builder.provide_store(tasks);
+        builder.provide_store(Arc::clone(&workspaces));
         Self {
             builder,
             stores: MemoryStores {
@@ -132,6 +137,7 @@ impl MemoryPlatform {
                 workers,
                 jobs,
                 seals,
+                workspaces,
                 blobs,
                 secrets,
                 forge_dir: Arc::new(forge_dir),

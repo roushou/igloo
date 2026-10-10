@@ -516,6 +516,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_sandbox_started_again_over_its_root_keeps_what_was_written_before_it_stopped() {
+        let Some(fixture) = Fixture::start(NetworkPolicy::AllowAll).await else {
+            return;
+        };
+        let (outcome, stdout) = fixture.run("echo kept > notes").await;
+        assert_eq!(outcome, ExitOutcome::Exited(0), "{stdout}");
+        fixture.runtime.stop(&fixture.sandbox).await.expect("stop");
+        fixture
+            .runtime
+            .start(&fixture.sandbox)
+            .await
+            .expect("start again");
+        let (outcome, stdout) = fixture.run("cat notes").await;
+        assert_eq!(outcome, ExitOutcome::Exited(0), "{stdout}");
+        assert_eq!(stdout.trim(), "kept");
+    }
+
+    #[tokio::test]
     async fn deny_all_leaves_only_loopback_and_allow_all_shares_the_host_network() {
         let Some(denied) = Fixture::start(NetworkPolicy::DenyAll).await else {
             return;

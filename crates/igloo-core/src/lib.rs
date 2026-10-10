@@ -1,6 +1,6 @@
 //! The pure domain of Igloo: the vocabulary every primitive is built from (identifiers,
 //! digests, time, actors, labels, validation, and the `Entity`, `Resource` and `Event` traits)
-//! and the platform primitives built on it (`sandbox`, `worker`, `job`, `snapshot`, `seal`, `repo`, `change`).
+//! and the platform primitives built on it (`sandbox`, `worker`, `job`, `snapshot`, `seal`, `repo`, `change`, `workspace`).
 //!
 //! Performs no I/O, has no async runtime, never reads the clock, generates IDs or touches the
 //! environment.
@@ -28,6 +28,7 @@ pub mod seal;
 pub mod snapshot;
 pub mod terminal;
 pub mod worker;
+pub mod workspace;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

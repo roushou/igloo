@@ -218,6 +218,7 @@ igloo/
 │   │   ├── platform/         one module per primitive: commands, reconcilers
 │   │   ├── ci/               pipeline spec, runs, forge integration
 │   │   ├── agents/           tool settings, tasks, harnesses, transcripts
+│   │   ├── workspaces/       workspaces: commands, lifecycle controller, sandbox and seal reactors
 │   │   ├── ports/            one trait per side effect, with its conformance suite
 │   │   ├── adapters/         memory/, postgres/, ...
 XX
@@ -263,6 +264,7 @@ Primitives:
 | Run       | resource (CI)             | Checks of one revision; pinned to a commit and a snapshot; terminal final  | 3     |
 | Outcome   | entity (CI)               | One per ended change; records once, then at most one revert                | 3     |
 | Task      | resource (agents)         | One agent on one goal in one sandbox, in turns; ends once, done or not     | 4     |
+| Workspace | resource (workspaces)     | A person's sandbox on a branch; a stop seals first; deleted is final       | 6     |
 | Grant     | value                     | Names an agent, its principal, one repo, a scope and an expiry             | 4     |
 | Workflow  | entity                    | Decisions are a pure function of history; effects through idempotent jobs  | 5     |
 
@@ -317,11 +319,19 @@ composition.rs  Server: the only place naming concrete adapters
   `PolicyEngine`, `TaskSupervisor`. Each has a memory adapter and a conformance suite.
 - **Layer collection.** `LayerCollector` sweeps the blob store every hour: it deletes blobs stored
   more than 24 hours ago that no live root reaches (snapshots recorded on repositories, snapshots
-  of sandboxes that have not ended, of builds and seals in progress). Before each sweep, each
+  of sandboxes that have not ended, of builds and seals in progress, and the one each workspace's last stop sealed). Before each sweep, each
   repository forgets the warm and agent snapshots unused for 7 days, keeping its most recently
   used one and those a live sandbox runs over; use is recorded at most hourly when a run or task
   checks out over a snapshot. `GET /v1/storage` reports the store and the latest sweep;
   `GET /v1/repos/{id}/snapshots` reports each snapshot's last use.
+- **Workspaces.** The workspace `Controller` (its `Lifecycle` reconciler) drives a workspace one step at a
+  time. Opening checks out the branch head over the repository's warm snapshot (or resumes from the
+  snapshot its last stop sealed), creates a sandbox with the network allowed and the pipeline's
+  secrets granted to its terminals, and records it. Stopping requests a seal, waits for it, records
+  the sealed snapshot and stops the sandbox; a failed seal keeps the previous snapshot. Reactors
+  carry sandbox and seal outcomes back as commands. A workspace with no terminal attached for two
+  hours stops itself: an attached terminal records activity when it opens, every ten minutes, and
+  when it closes. Deleting stops the sandbox without sealing.
 
 ## 8. Worker
 
@@ -405,6 +415,9 @@ composition.rs  Server: the only place naming concrete adapters
   sandbox (subprotocol `igloo.terminal.v1`): binary frames carry the terminal's bytes, text frames
   carry JSON resize and exit messages. Authenticated with the bearer header, or, for a browser, an
   `igloo.bearer.<token>` subprotocol. It ends with the process or the socket.
+  A workspace's terminal is its sandbox's: clients read the workspace's `sandbox` and open that. When
+  the sandbox belongs to a workspace, the terminal's environment carries the repository secrets the
+  workspace was opened with, and the workspace is marked in use while the terminal is attached.
 - **Worker protocol** `igloo.worker.v1`: the server sends the full desired `Assignment`, lease
   grants, cancels and drain; the worker sends hello, heartbeats, usage (disk, layer cache, sandboxes held; every 30 s), status, logs and results.
   Terminals ride the same stream: the server sends open, input, resize and close; the worker sends
