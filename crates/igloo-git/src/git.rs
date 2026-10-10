@@ -159,7 +159,18 @@ mod tests {
         let git = Git::isolated()
             .with_program(program)
             .with_timeout(std::time::Duration::from_millis(100));
-        let opened = git.open(fixture.work()).await;
+        // A process another test forks while the script is being written can hold it open for
+        // writing until it execs, which makes running it fail with "text file busy" on Linux.
+        let opened = loop {
+            match git.open(fixture.work()).await {
+                Err(GitError::Spawn(error))
+                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                opened => break opened,
+            }
+        };
         assert!(
             matches!(opened, Err(GitError::Timeout { .. })),
             "{opened:?}"
